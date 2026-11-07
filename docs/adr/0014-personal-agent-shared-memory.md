@@ -18,6 +18,7 @@
 - **長期記憶**（例如偏好、常去地點）與**對話上下文**跨通道共用。用戶在 LINE OA 說的事，在 App 裡 agent 也知道
 - agent 執行於 Core API 的 `agent` 模組，透過工具操作 task、行事曆與旅遊行程（見 [0016](0016-in-app-calendar.md)、[0017](0017-travel-itinerary-planning.md)）
 - LLM 呼叫走 [0013](0013-llm-provider-abstraction.md) 的抽象層
+- 長期記憶以 pgvector 做語意檢索，與其他資料存在同一個 Supabase Postgres（見 [0005](0005-supabase-postgres.md)）
 
 ## 後果
 
@@ -34,5 +35,5 @@
 
 ## 待決
 
-- 長期記憶的資料模型、儲存與檢索方式
+- 長期記憶的資料模型與寫入時機
 - 對話上下文的長度管理策略

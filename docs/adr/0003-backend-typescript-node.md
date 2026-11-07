@@ -31,4 +31,4 @@ App 使用 React Native（TypeScript）。訊息讀取採用的 linejs 與 whats
 
 ## 待決
 
-- Web 框架、ORM、測試工具的選擇
+- Web 框架與測試工具的選擇（ORM 見 [0005](0005-supabase-postgres.md)）

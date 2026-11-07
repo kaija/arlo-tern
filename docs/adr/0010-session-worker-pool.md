@@ -14,11 +14,12 @@
 
 ## 決策
 
-採用**共用 worker pool**（即 [0002](0002-system-decomposition.md) 的 Ingestion worker，部署於 GCE Managed Instance Group，見 [0004](0004-gcp-cloud-run-and-gce.md)）：
+採用**共用 worker pool**（即 [0002](0002-system-decomposition.md) 的 Ingestion worker，部署於 GCE Managed Instance Group，見 [0004](0004-gcp-compute-tokyo.md)）：
 
 - 每個節點承載 N 位用戶的 session
 - 依用戶分片（shard），把用戶分配到節點
-- session 憑證**加密存儲**於節點之外。節點故障時，該節點的用戶可在其他節點從存儲的憑證恢復，不需要用戶重新掃碼
+- session 憑證以 **Cloud KMS 信封加密**後，存於節點之外的 Supabase Postgres。金鑰在 GCP、密文在 Supabase，單獨拿到資料庫無法解密
+- 節點故障時，該節點的用戶可在其他節點從存儲的憑證恢復，不需要用戶重新掃碼
 - worker 只把讀到的訊息發佈到 Pub/Sub，不做 LLM 處理
 
 ## 後果
@@ -32,10 +33,10 @@
 
 - 同一節點的 session 互相影響（例如 Chromium 吃光記憶體），需要監控並限制每節點的 session 數
 - 要自行實作分片分配、節點健康檢查與 session 遷移
-- 加密憑證的存放處是高價值的攻擊目標
+- 加密憑證的存放處與 KMS 解密權限都是高價值的攻擊目標，解密權限只能給 Ingestion worker
 
 ## 待決
 
 - 每節點的 session 上限與機型
 - 分片分配與重新平衡的機制
-- 憑證加密方式與金鑰管理
+- KMS 金鑰的輪替方式

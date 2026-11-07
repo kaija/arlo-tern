@@ -38,11 +38,14 @@ Gmail ──(users.watch → Cloud Pub/Sub)────────────�
                                                         (task 抽取 / 可疑偵測)
                                                                   │
                                                                   ▼
-React Native App ◄──► Core API (模組化單體) ◄──► PostgreSQL
+React Native App ◄──► Core API (模組化單體) ◄──► Supabase Postgres
+   (Supabase Auth 登入)
 LINE OA / WhatsApp 官方號 ◄──(官方 API)──► Core API
 ```
 
 Core API 內部以模組劃分邊界（例如 `auth`、`accounts`、`tasks`、`calendar`、`travel`、`agent`、`notifications`、`channels`）。模組之間只透過公開介面互相呼叫，不直接存取彼此的資料表，之後需要時可以再拆出去。
+
+資料庫與登入使用 Supabase，運算、佇列與排程在 GCP（見 [0021](0021-managed-backend-services-evaluation.md)、[0004](0004-gcp-compute-tokyo.md)）。
 
 ## 後果
 
