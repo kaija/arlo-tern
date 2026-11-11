@@ -58,9 +58,8 @@ Core API 內部以模組劃分邊界（例如 `auth`、`accounts`、`tasks`、`c
 ### 負面 / 風險
 
 - 模組邊界靠紀律維持，需在程式碼審查時把關
-- 原始訊息會短暫停留在 Pub/Sub。保留時間必須設短，以符合 [0011](0011-no-raw-message-retention.md)
+- 原始訊息會短暫停留在 Pub/Sub，最多 24 小時（見 [0027](0027-pubsub-topology.md)、[0011](0011-no-raw-message-retention.md)）
 
 ## 待決
 
-- Pub/Sub topic / subscription 的具體劃分，以及訊息保留時間
 - Gmail 新信通知進入 Pub/Sub 後，由哪個元件呼叫 Gmail API 取信

@@ -29,6 +29,4 @@ App 使用 React Native（TypeScript）。訊息讀取採用的 linejs 與 whats
 
 - 部分 AI / ML 工具以 Python 為主，若未來需要，得另外評估
 
-## 待決
-
-- Web 框架與測試工具的選擇（ORM 見 [0005](0005-supabase-postgres.md)）
+框架與測試工具見 [0025](0025-backend-framework-and-testing.md)，ORM 見 [0005](0005-supabase-postgres.md)。

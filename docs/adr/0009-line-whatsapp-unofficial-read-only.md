@@ -22,7 +22,8 @@ LINE 與 WhatsApp 的官方 API（LINE Messaging API、WhatsApp Business Cloud A
 - LINE：**linejs**
 - WhatsApp：**whatsapp-web.js**
 - **只讀，不發送任何訊息**。讀取端的介面只開放接收訊息事件，不開放任何發送能力。所有對用戶的發訊都走官方帳號的官方 API（見 [0012](0012-official-accounts.md)）
-- 讀取範圍：用戶帳號 session 中可見的對話
+- 讀取範圍：用戶帳號 session 中可見的對話，**包含群組**。群組預設全部處理，用戶可在 App 內逐一關閉
+- 綁定前須取得用戶的明確同意（見 [0024](0024-privacy-consent-compliance.md)）
 - session 的託管方式見 [0010](0010-session-worker-pool.md)
 
 ## 後果
@@ -38,9 +39,8 @@ LINE 與 WhatsApp 的官方 API（LINE Messaging API、WhatsApp Business Cloud A
 - **不穩定**：平台協議或網頁改版可能讓函式庫隨時失效，需要監控並快速更新版本
 - **高敏感**：session 等同用戶帳號的完整存取權，外洩的影響很大。session 憑證必須加密存儲，存取要嚴格控管
 - 讀取與發送使用不同機制，系統要清楚區分「讀取用的個人 session」與「發送用的官方帳號」
+- 群組預設全部處理，會處理到大量第三人的訊息，處理量與 LLM 成本也較高
 
 ## 待決
 
-- 向用戶告知風險並取得同意的流程與文案
-- 個資與隱私的法規遵循評估
-- 群組對話是否也納入處理
+- 群組中第三人資料的合法處理依據（見 [0024](0024-privacy-consent-compliance.md)）

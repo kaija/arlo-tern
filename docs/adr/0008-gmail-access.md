@@ -19,7 +19,7 @@ backend 需要讀取用戶的 email 來抽取 task 與偵測可疑郵件。`gmai
 - refresh token：以 Cloud KMS 信封加密後，存於 Supabase Postgres
 - 新信偵測：Gmail `users.watch` 推送到 **Cloud Pub/Sub**，不輪詢
 - MVP：OAuth 同意畫面維持**測試模式**，用戶須先加入測試用戶名單
-- 公開上線前：完成 Google 驗證與 CASA 安全評估
+- **內測期間就同步啟動** Google 驗證與 CASA 安全評估，在公開上線、或測試用戶超過 100 人之前完成
 
 ## 後果
 
@@ -33,8 +33,8 @@ backend 需要讀取用戶的 email 來抽取 task 與偵測可疑郵件。`gmai
 - 測試模式下，外部用戶類型的 refresh token 約 **7 天**就過期，內測用戶需定期重新授權 Gmail，App 要能偵測並引導重新授權
 - `users.watch` 也有效期限（最長 7 天），需要排程定期續訂
 - 內測人數上限 100 人，要擴大就必須先完成驗證
-- CASA 評估有時間與費用成本，需列入公開上線時程
+- CASA 評估有時間與費用成本。內測期間就要準備安全文件與評估，會分走開發人力
 
 ## 待決
 
-- CASA 評估的時程與負責人
+- CASA 評估的負責人

@@ -1,39 +1,61 @@
-# 0014. 每位用戶一個個人 AI agent，跨通道共用記憶與對話上下文
+# 0014. 每位用戶一個個人 AI agent：跨通道共用對話紀錄，以工具存取 todo / schedule 與記憶
 
 - 狀態：已接受
-- 日期：2026-11-07
+- 日期：2026-11-07（2026-11-11 更新）
 
 ## 背景與問題
 
-用戶可以在三個地方跟自己的 AI agent 對話：App、LINE OA、WhatsApp 官方號（見 [0012](0012-official-accounts.md)）。需要決定這些是不是同一個 agent。
+用戶可以在三個地方跟自己的 AI agent 對話：App、LINE OA、WhatsApp 官方號（見 [0012](0012-official-accounts.md)）。需要決定：
+
+- 這些是不是同一個 agent
+- agent 記得什麼、存在哪裡、什麼時候寫入
+- 跨通道累積的對話怎麼放進有限的上下文
 
 ## 考慮的選項
+
+agent 範圍：
 
 1. 同一個 agent，記憶與對話上下文都共用
 2. 同一個 agent，長期記憶共用，但各通道的對話串分開
 
+上下文管理：
+
+1. 保留最近 N 輪 + 更早對話的摘要（自行實作）
+2. 使用供應商的自動壓縮功能
+
 ## 決策
 
-- **一位用戶一個 agent**。App、LINE OA、WhatsApp 官方號只是不同的對話入口
-- **長期記憶**（例如偏好、常去地點）與**對話上下文**跨通道共用。用戶在 LINE OA 說的事，在 App 裡 agent 也知道
-- agent 執行於 Core API 的 `agent` 模組，透過工具操作 task、行事曆與旅遊行程（見 [0016](0016-in-app-calendar.md)、[0017](0017-travel-itinerary-planning.md)）
-- LLM 呼叫走 [0013](0013-llm-provider-abstraction.md) 的抽象層
-- 長期記憶以 pgvector 做語意檢索，與其他資料存在同一個 Supabase Postgres（見 [0005](0005-supabase-postgres.md)）
+- **一位用戶一個 agent**。App、LINE OA、WhatsApp 官方號只是不同的對話入口，對話上下文跨通道共用
+- agent 執行於 Core API 的 `agent` 模組，LLM 呼叫走 [0013](0013-llm-provider-abstraction.md) 的抽象層
+- **agent 的資料**（都在 Supabase Postgres，見 [0005](0005-supabase-postgres.md)）：
+
+  | 資料 | 說明 | agent 怎麼用 |
+  | --- | --- | --- |
+  | todo / schedule 資料表 | 用戶的 task 與行程安排 | 以工具依時間範圍查詢，並建立、更新 |
+  | 對話紀錄 | 用戶與 agent 在所有通道的對話，依用戶保存 | 新訊息加入後，可以拿歷史對話來抽取 task |
+  | 事件記憶（pgvector） | 完整事件的 embedding | **由 agent 判斷**何時值得記錄，需要時以語意檢索 |
+
+- **對話紀錄的範圍**：只有用戶與 agent 的對話。Gmail / LINE / WhatsApp 讀到的訊息仍不保存原文（見 [0011](0011-no-raw-message-retention.md)）
+- **對話紀錄的保存**：保存到用戶刪除為止。用戶可刪除單筆或全部；刪除帳號時一併刪除（見 [0024](0024-privacy-consent-compliance.md)）
+- **上下文管理**：保留最近 N 輪的原文，更早的對話壓成摘要。自行實作，不依賴特定供應商的功能
 
 ## 後果
 
 ### 正面
 
 - 用戶體驗一致，不必在不同通道重複說明
-- 系統只需要維護一套 agent 邏輯與記憶
+- todo / schedule 是結構化資料，agent 透過工具查詢，不必把全部塞進上下文
+- 上下文管理不依賴供應商，換模型時行為一致
 
 ### 負面 / 風險
 
 - 同一位用戶可能同時從多個通道發訊，需要處理並發與訊息順序
 - 回覆要配合各通道的格式（App 的豐富 UI 與 LINE / WhatsApp 的訊息格式）
-- 對話上下文跨通道累積得很快，需要摘要或截斷策略
+- 由 agent 決定寫入哪些事件記憶，記錄的品質取決於模型判斷，可能記太多或漏記
+- 對話紀錄長期保存，是另一份敏感資料，也需要支援 GDPR 的存取與刪除
+- 摘要會遺失細節，舊對話中的資訊可能抽取不到
 
 ## 待決
 
-- 長期記憶的資料模型與寫入時機
-- 對話上下文的長度管理策略
+- N 的值與摘要的觸發時機
+- 事件記憶的資料結構，以及用戶是否能檢視、刪除

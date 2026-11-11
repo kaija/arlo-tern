@@ -15,9 +15,10 @@
 
 ## 決策
 
-- 原始訊息只在處理管線中**短暫**存在（Pub/Sub 佇列、處理 worker 的記憶體），處理完即丟棄
+- 原始訊息只在處理管線中**短暫**存在（Pub/Sub 佇列、處理 worker 的記憶體），處理完即丟棄。在 Pub/Sub 中最多保留 24 小時（見 [0027](0027-pubsub-topology.md)）
 - 資料庫只保存**抽取結果**：task、可疑訊息警告，以及指回原訊息的**來源參照 ID**（例如 Gmail message ID）
 - 適用來源：Gmail、LINE、WhatsApp
+- 不適用於用戶與 agent 的對話紀錄：那是用戶直接對 agent 說的話，依 [0014](0014-personal-agent-shared-memory.md) 保存
 
 ## 後果
 
@@ -35,5 +36,4 @@
 
 ## 待決
 
-- Pub/Sub 訊息保留時間的上限
 - 警告與 task 中可保留的原文摘錄長度（若有）

@@ -46,5 +46,6 @@
 
 ## 待決
 
-- VM 機型與每節點承載的 session 數
-- 部署管線（CI/CD）與基礎設施即程式碼（IaC）工具
+- VM 機型（每節點的 session 上限見 [0010](0010-session-worker-pool.md)）
+
+CI/CD 與 IaC 見 [0026](0026-cicd-and-iac.md)。
