@@ -1,0 +1,3359 @@
+openapi: 3.1.0
+info:
+  title: Arlo Tern Core API
+  version: 0.1.0
+  summary: 核心服務對 App 提供的 API，以及 LINE 與 WhatsApp 官方帳號的 webhook 端點。
+  description: |
+    本文件定義核心服務（core）對外的 HTTP 介面，範圍是 MVP（100 人以下內測）。
+    設計依據見 `docs/design/system-design.md` 與 `docs/adr/`。
+
+    ## 慣例
+
+    - **用戶範圍**：路徑與請求內容都沒有用戶識別碼，用戶一律從 access token 取得。
+      存取不屬於自己的資源一律回 `404`。
+    - **錯誤**：一律回 `application/problem+json`，其中 `code` 是機器可讀的錯誤碼。
+    - **分頁**：游標分頁。請求帶 `limit` 與 `cursor`，回應帶 `nextCursor`；
+      `nextCursor` 為 `null` 表示沒有下一頁。
+    - **時間**：時間點用 ISO 8601 UTC（`date-time`）；日期用 `YYYY-MM-DD`；
+      當地時間用 `HH:mm`，並搭配明確的時區欄位解讀。
+    - **原文**：task、待確認項目、可疑訊息警告、記憶、通知的資料結構都不含 LINE 訊息原文。
+      各資源的 `/source` 端點會回傳原文，而且只在訊息保存期內有效。
+      另一個例外是 agent 對話：agent 檢索歷史訊息後，回覆中可能引用原文。
+
+    ## 閘門錯誤
+
+    - `not_invited`：內測階段，該 Google 帳號不在邀請名單內。
+    - `consent_required`：缺少必要的同意，或同意的文件已改版。
+      回應的 `requiredConsents` 列出需要同意的文件與版本。
+
+    ## 不在本文件範圍
+
+    - 核心服務與讀取服務（connector）之間的內部控制介面。
+    - 資料匯出：內測期間由人工處理，沒有對應的端點。
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: https://{host}/v1
+    description: 部署環境。本機開發時把 host 換成本機的位址與埠。
+    variables:
+      host:
+        default: api.invalid
+        description: 主機名稱。正式的網域尚未決定，預設值只是占位。
+tags:
+  - name: Auth
+    description: 以 Google 登入，後端簽發自己的 token。
+  - name: Consent
+    description: 同意文件與同意紀錄。
+  - name: Account
+    description: 帳號、設定、裝置與推播 token。
+  - name: LINE Connection
+    description: 連結與中斷個人 LINE 帳號（只讀）。
+  - name: Conversations
+    description: 對話清單與讀取範圍。
+  - name: Calendar
+    description: 行事曆檢視用的彙整查詢。
+  - name: Tasks
+    description: Task、提醒、變更紀錄與來源訊息。
+  - name: Task Proposals
+    description: 待確認清單，包含低信心的新 task 與對既有 task 的修改或取消建議。
+  - name: Scam Alerts
+    description: 可疑訊息警告。
+  - name: Trips
+    description: 旅遊行程與行程項目。
+  - name: Agent
+    description: 與個人 AI agent 的對話，以及 agent 的記憶條目。
+  - name: OA Bindings
+    description: 把 LINE 或 WhatsApp 官方帳號上的用戶綁定到 App 帳號。
+  - name: Notifications
+    description: App 內的通知中心。
+  - name: Webhooks
+    description: 由 LINE 與 Meta 呼叫的端點，以簽章驗證，不使用 bearer token。
+security:
+  - bearerAuth: []
+paths:
+  /auth/google:
+    post:
+      tags: [Auth]
+      operationId: signInWithGoogle
+      summary: 以 Google ID token 登入或註冊
+      description: |
+        後端驗證 ID token 的簽章、簽發者、對象與有效期，並以 Google 帳號的 `sub`
+        找到或建立 App 帳號。
+
+        首次登入必須在 `acceptedConsents` 附上必要的同意；沒有附或不完整時回
+        `403 consent_required`，帳號不會建立。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoogleSignInRequest'
+      responses:
+        '200':
+          description: 登入成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: ID token 無效或已過期（`invalid_id_token`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 不在邀請名單（`not_invited`），或缺少必要的同意（`consent_required`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshTokens
+      summary: 以 refresh token 換發新的 token
+      description: |
+        每次使用都會輪替 refresh token。已輪替的舊 token 再次被使用時，
+        該裝置的整串 token 都會被撤銷，回 `401 token_reuse_detected`。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: 換發成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: refresh token 無效、過期或被重用
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: signOut
+      summary: 登出目前的裝置
+      description: 撤銷目前裝置的 refresh token，並刪除該裝置的推播 token。
+      responses:
+        '204':
+          description: 已登出
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /consent-documents:
+    get:
+      tags: [Consent]
+      operationId: listConsentDocuments
+      summary: 取得各類同意文件的現行版本
+      description: 不需要登入，供首次登入前顯示文件。
+      security: []
+      responses:
+        '200':
+          description: 現行的同意文件
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConsentDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /me:
+    get:
+      tags: [Account]
+      operationId: getMe
+      summary: 取得目前用戶與待處理的同意
+      responses:
+        '200':
+          description: 目前用戶
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/consents:
+    get:
+      tags: [Consent]
+      operationId: listMyConsents
+      summary: 列出我的同意紀錄
+      responses:
+        '200':
+          description: 同意紀錄，新的在前
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConsentRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Consent]
+      operationId: acceptConsent
+      summary: 同意某份文件的現行版本
+      description: 文件改版後，用這個端點重新同意。`version` 必須是該類型的現行版本。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentAcceptance'
+      responses:
+        '201':
+          description: 已記錄同意
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentRecord'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: 送出的版本不是現行版本（`consent_version_outdated`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /me/settings:
+    get:
+      tags: [Account]
+      operationId: getSettings
+      summary: 取得設定
+      responses:
+        '200':
+          description: 目前的設定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [Account]
+      operationId: updateSettings
+      summary: 更新設定
+      description: |
+        只需要送出要變更的欄位。縮短 `retentionDays` 後，下一次的每日清除就會套用新的期限。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdate'
+      responses:
+        '200':
+          description: 更新後的設定
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /me/deletion:
+    post:
+      tags: [Account]
+      operationId: requestAccountDeletion
+      summary: 刪除帳號
+      description: |
+        需要附上新取得的 Google ID token 作為再次確認。
+
+        接受請求後立即撤銷所有 token。背景工作接著中斷 LINE 連結（登出連結裝置、
+        刪除憑證），並刪除該用戶的所有資料與官方帳號綁定。這個操作無法復原。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountDeletionRequest'
+      responses:
+        '202':
+          description: 已接受，刪除在背景進行
+        '401':
+          description: 未登入，或 ID token 無效、與目前帳號不符
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /me/devices/{deviceId}/push-token:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    put:
+      tags: [Account]
+      operationId: registerPushToken
+      summary: 註冊或更新裝置的推播 token
+      description: App 每次啟動與 FCM registration token 更新時呼叫。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushTokenRequest'
+      responses:
+        '204':
+          description: 已儲存
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Account]
+      operationId: deletePushToken
+      summary: 刪除裝置的推播 token
+      responses:
+        '204':
+          description: 已刪除，或原本就不存在
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /line/connection:
+    get:
+      tags: [LINE Connection]
+      operationId: getLineConnection
+      summary: 取得個人 LINE 帳號的連結狀態
+      responses:
+        '200':
+          description: 連結狀態
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineConnection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [LINE Connection]
+      operationId: disconnectLine
+      summary: 中斷 LINE 連結
+      description: |
+        立即停止讀取、登出 LINE 上的連結裝置、刪除保存的憑證。
+        task、行程、記憶會保留。
+      parameters:
+        - name: deleteMessages
+          in: query
+          description: 是否一併刪除已保存的原始訊息。
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '202':
+          description: 已接受，中斷連結在背景進行
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: 目前沒有連結（`line_not_linked`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /line/link-sessions:
+    post:
+      tags: [LINE Connection]
+      operationId: createLineLinkSession
+      summary: 開始連結個人 LINE 帳號
+      description: |
+        建立一個連結流程。連結是非同步的：App 以 `GET /line/link-sessions/{linkSessionId}`
+        輪詢狀態，依狀態顯示 QR code 或驗證碼。
+
+        用戶必須已同意現行版本的 LINE 非官方連線風險告知，否則回 `403 consent_required`。
+      responses:
+        '201':
+          description: 已建立連結流程
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineLinkSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ConsentRequired'
+        '409':
+          description: 已經連結（`line_already_linked`），或已有進行中的連結流程（`link_session_in_progress`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 讀取服務暫時無法使用（`connector_unavailable`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /line/link-sessions/{linkSessionId}:
+    parameters:
+      - $ref: '#/components/parameters/LinkSessionId'
+    get:
+      tags: [LINE Connection]
+      operationId: getLineLinkSession
+      summary: 取得連結流程的狀態
+      responses:
+        '200':
+          description: 連結流程
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineLinkSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [LINE Connection]
+      operationId: cancelLineLinkSession
+      summary: 取消連結流程
+      responses:
+        '204':
+          description: 已取消，或流程已經結束
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /conversations:
+    get:
+      tags: [Conversations]
+      operationId: listConversations
+      summary: 列出 LINE 對話與各自的讀取設定
+      description: |
+        包含所有已知的對話。未被讀取的對話（例如未 opt-in 的官方帳號）只有名稱與類型，
+        系統沒有保存它們的訊息。
+      parameters:
+        - name: type
+          in: query
+          description: 依對話類型篩選。
+          schema:
+            $ref: '#/components/schemas/ConversationType'
+        - name: ingestionEnabled
+          in: query
+          description: 依目前是否被讀取篩選。
+          schema:
+            type: boolean
+        - name: q
+          in: query
+          description: 以名稱搜尋。
+          schema:
+            type: string
+            maxLength: 100
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 對話清單
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Conversation'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /conversations/{conversationId}:
+    parameters:
+      - $ref: '#/components/parameters/ConversationId'
+    patch:
+      tags: [Conversations]
+      operationId: updateConversation
+      summary: 變更對話的讀取設定
+      description: |
+        - 一般帳號與群組預設讀取：送 `false` 可以排除。
+        - 其他官方帳號預設不讀取：送 `true` 可以 opt-in。
+        - 送 `null` 回到該類型的預設值。
+
+        把對話改成不讀取時，系統會刪除該對話已保存的原始訊息，之後 agent 也查不到它們；
+        由這些訊息產生的 task 與警告會保留，但來源訊息不再可用。
+        把對話改成讀取時，只會讀取之後收到的訊息。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationUpdate'
+      responses:
+        '200':
+          description: 更新後的對話
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /calendar:
+    get:
+      tags: [Calendar]
+      operationId: getCalendar
+      summary: 取得日期範圍內的 task、Trip 與行程項目
+      description: |
+        供日、週、月檢視使用。回傳與範圍重疊的 Trip、範圍內的行程項目，
+        以及範圍內狀態不是 `cancelled` 的 task。待確認清單的項目不在其中。
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: 起始日期（含）。
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          description: 結束日期（含）。與 `from` 的間隔最多 62 天。
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: 範圍內的行事曆資料
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /tasks:
+    get:
+      tags: [Tasks]
+      operationId: listTasks
+      summary: 列出 task
+      parameters:
+        - name: from
+          in: query
+          description: 只回傳日期在此之後（含）的 task。
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: 只回傳日期在此之前（含）的 task。
+          schema:
+            type: string
+            format: date
+        - name: status
+          in: query
+          description: 依狀態篩選。
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+        - name: tripId
+          in: query
+          description: 只回傳關聯到指定 Trip 的 task。
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: task 清單，依日期與時間排序
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Task'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    post:
+      tags: [Tasks]
+      operationId: createTask
+      summary: 手動建立 task
+      description: |
+        用戶建立的 task 之後不會被 AI 自動覆蓋。
+
+        `reminderMode` 決定提醒怎麼產生：`ai` 由 AI 依任務性質決定並套用系統護欄；
+        `manual` 使用 `reminders` 內的時間；`none` 不設提醒。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreate'
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /tasks/{taskId}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Tasks]
+      operationId: getTask
+      summary: 取得 task
+      responses:
+        '200':
+          description: task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Tasks]
+      operationId: updateTask
+      summary: 修改 task
+      description: |
+        只需要送出要變更的欄位。修改後這個 task 會標記為用戶修改過，
+        之後 AI 對它的修改與取消都只會成為待確認的建議。
+
+        日期或時間變更時，尚未發出的 AI 提醒會重新產生；用戶手動調整過的提醒依相同提前量平移。
+        狀態改成 `completed` 或 `cancelled` 時，尚未發出的提醒會取消。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskUpdate'
+      responses:
+        '200':
+          description: 更新後的 task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Tasks]
+      operationId: deleteTask
+      summary: 刪除 task
+      description: 永久刪除 task 與它的提醒、變更紀錄。只想取消的話，改用 `PATCH` 把狀態設成 `cancelled`。
+      responses:
+        '204':
+          description: 已刪除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /tasks/{taskId}/source:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Tasks]
+      operationId: getTaskSource
+      summary: 取得 task 的來源訊息與前後文
+      description: |
+        回傳產生這個 task 的 LINE 訊息與前後數則。只在訊息保存期內有效。
+      responses:
+        '200':
+          description: 來源訊息與前後文
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceContext'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: task 不存在，或這個 task 沒有來源訊息（例如手動建立的）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '410':
+          $ref: '#/components/responses/SourceExpired'
+  /tasks/{taskId}/reminders:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Tasks]
+      operationId: listTaskReminders
+      summary: 列出 task 的提醒
+      responses:
+        '200':
+          description: 提醒清單，依時間排序
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Reminder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Tasks]
+      operationId: createTaskReminder
+      summary: 新增提醒
+      description: |
+        用戶設定的提醒時間必須晚於現在、不晚於 task 的到期時間，
+        而且每個 task 的提醒數有上限。用戶自己設定的時間不受勿擾時段限制。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReminderInput'
+      responses:
+        '201':
+          description: 已新增
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reminder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 已達每個 task 的提醒數上限（`reminder_limit_reached`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /tasks/{taskId}/reminders/{reminderId}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+      - $ref: '#/components/parameters/ReminderId'
+    patch:
+      tags: [Tasks]
+      operationId: updateTaskReminder
+      summary: 修改提醒時間
+      description: 修改後這個提醒會標記為用戶調整過。已發出的提醒不能修改。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReminderInput'
+      responses:
+        '200':
+          description: 更新後的提醒
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reminder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 提醒已經發出或已取消（`reminder_not_editable`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Tasks]
+      operationId: deleteTaskReminder
+      summary: 關閉提醒
+      responses:
+        '204':
+          description: 已關閉
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /tasks/{taskId}/changes:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Tasks]
+      operationId: listTaskChanges
+      summary: 列出 task 的變更紀錄
+      description: 包含管線自動套用的變更、agent 的修改與用戶的修改，新的在前。
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 變更紀錄
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaskChange'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /tasks/{taskId}/changes/{changeId}/revert:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+      - $ref: '#/components/parameters/ChangeId'
+    post:
+      tags: [Tasks]
+      operationId: revertTaskChange
+      summary: 還原一筆變更
+      description: |
+        把 task 還原成該筆變更之前的值。還原本身會產生一筆新的變更紀錄，
+        並把 task 標記為用戶修改過。只能還原最新的一筆尚未還原的變更。
+      responses:
+        '200':
+          description: 還原後的 task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 這筆變更已還原，或之後還有其他變更（`change_not_revertible`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /task-proposals:
+    get:
+      tags: [Task Proposals]
+      operationId: listTaskProposals
+      summary: 列出待確認清單
+      parameters:
+        - name: status
+          in: query
+          description: 依狀態篩選，預設只回傳 `pending`。
+          schema:
+            $ref: '#/components/schemas/ProposalStatus'
+        - name: kind
+          in: query
+          description: 依建議的類型篩選。
+          schema:
+            $ref: '#/components/schemas/ProposalKind'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 待確認項目，新的在前
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaskProposal'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /task-proposals/{proposalId}:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      tags: [Task Proposals]
+      operationId: getTaskProposal
+      summary: 取得待確認項目
+      responses:
+        '200':
+          description: 待確認項目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskProposal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /task-proposals/{proposalId}/source:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      tags: [Task Proposals]
+      operationId: getTaskProposalSource
+      summary: 取得待確認項目的來源訊息與前後文
+      responses:
+        '200':
+          description: 來源訊息與前後文
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceContext'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/SourceExpired'
+  /task-proposals/{proposalId}/accept:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      tags: [Task Proposals]
+      operationId: acceptTaskProposal
+      summary: 接受待確認項目
+      description: |
+        依建議的類型建立、修改或取消 task。可以在 `overrides` 先調整建議的內容再套用。
+        接受後的 task 視同用戶修改過。
+
+        提醒在接受的當下才產生：以接受時的時間重新決定提醒並套用系統護欄，
+        不沿用建議產生當時算出的提醒時間。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProposalAcceptRequest'
+      responses:
+        '200':
+          description: 已套用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProposalAcceptResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 這個項目已經處理過或已被取代（`proposal_not_pending`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /task-proposals/{proposalId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    post:
+      tags: [Task Proposals]
+      operationId: rejectTaskProposal
+      summary: 拒絕待確認項目
+      responses:
+        '200':
+          description: 已拒絕
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskProposal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 這個項目已經處理過或已被取代（`proposal_not_pending`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /scam-alerts:
+    get:
+      tags: [Scam Alerts]
+      operationId: listScamAlerts
+      summary: 列出可疑訊息警告
+      parameters:
+        - name: level
+          in: query
+          description: 依等級篩選。
+          schema:
+            $ref: '#/components/schemas/ScamAlertLevel'
+        - name: status
+          in: query
+          description: 依狀態篩選。
+          schema:
+            $ref: '#/components/schemas/ScamAlertStatus'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 警告清單，新的在前
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScamAlert'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /scam-alerts/{alertId}:
+    parameters:
+      - $ref: '#/components/parameters/AlertId'
+    get:
+      tags: [Scam Alerts]
+      operationId: getScamAlert
+      summary: 取得可疑訊息警告
+      responses:
+        '200':
+          description: 警告
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScamAlert'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Scam Alerts]
+      operationId: updateScamAlert
+      summary: 變更警告的狀態
+      description: 把警告標記為已處理，或重新開啟。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScamAlertUpdate'
+      responses:
+        '200':
+          description: 更新後的警告
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScamAlert'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /scam-alerts/{alertId}/source:
+    parameters:
+      - $ref: '#/components/parameters/AlertId'
+    get:
+      tags: [Scam Alerts]
+      operationId: getScamAlertSource
+      summary: 取得警告的來源訊息與前後文
+      description: 只在訊息保存期內有效。
+      responses:
+        '200':
+          description: 來源訊息與前後文
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceContext'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/SourceExpired'
+  /scam-alerts/{alertId}/feedback:
+    parameters:
+      - $ref: '#/components/parameters/AlertId'
+    put:
+      tags: [Scam Alerts]
+      operationId: submitScamAlertFeedback
+      summary: 回報警告是否正確
+      description: 回報會用來改進判定。可以重複送出以更改回報。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScamFeedbackRequest'
+      responses:
+        '200':
+          description: 更新後的警告
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScamAlert'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /trips:
+    get:
+      tags: [Trips]
+      operationId: listTrips
+      summary: 列出 Trip
+      parameters:
+        - name: status
+          in: query
+          description: 依狀態篩選。
+          schema:
+            $ref: '#/components/schemas/TripStatus'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Trip 清單，依開始日期排序
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Trip'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    post:
+      tags: [Trips]
+      operationId: createTrip
+      summary: 建立 Trip
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TripCreate'
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /trips/{tripId}:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [Trips]
+      operationId: getTrip
+      summary: 取得 Trip 與完整的逐日行程
+      responses:
+        '200':
+          description: Trip 與行程項目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Trips]
+      operationId: updateTrip
+      summary: 修改 Trip
+      description: 縮短日期範圍時，落在新範圍之外的行程項目必須先移動或刪除。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TripUpdate'
+      responses:
+        '200':
+          description: 更新後的 Trip
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 有行程項目落在新的日期範圍之外（`items_out_of_range`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Trips]
+      operationId: deleteTrip
+      summary: 刪除 Trip
+      description: 永久刪除 Trip 與它的行程項目。關聯的 task 會保留，但解除與 Trip 的關聯。
+      responses:
+        '204':
+          description: 已刪除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /trips/{tripId}/items:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    post:
+      tags: [Trips]
+      operationId: createItineraryItem
+      summary: 新增行程項目
+      description: 沒有指定 `position` 時，依開始時間插入當日的適當位置。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItineraryItemCreate'
+      responses:
+        '201':
+          description: 已新增
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItineraryItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /trips/{tripId}/items/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+      - $ref: '#/components/parameters/ItemId'
+    patch:
+      tags: [Trips]
+      operationId: updateItineraryItem
+      summary: 修改或移動行程項目
+      description: |
+        只需要送出要變更的欄位。改變 `date` 就是把項目移到另一天。
+        系統不強制檢查時間衝突，App 自行提示。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ItineraryItemUpdate'
+      responses:
+        '200':
+          description: 更新後的行程項目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ItineraryItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Trips]
+      operationId: deleteItineraryItem
+      summary: 刪除行程項目
+      responses:
+        '204':
+          description: 已刪除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /trips/{tripId}/days/{date}/order:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+      - name: date
+        in: path
+        required: true
+        description: Trip 範圍內的日期。
+        schema:
+          type: string
+          format: date
+    put:
+      tags: [Trips]
+      operationId: reorderTripDay
+      summary: 重排某一天的行程順序
+      description: '`itemIds` 必須剛好包含該日的所有行程項目。'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DayOrderRequest'
+      responses:
+        '200':
+          description: 重排後該日的行程項目
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ItineraryItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /trips/{tripId}/changes:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+    get:
+      tags: [Trips]
+      operationId: listTripChanges
+      summary: 列出 Trip 的變更紀錄
+      description: 包含 agent 與用戶對 Trip 與行程項目的修改，新的在前。
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 變更紀錄
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TripChange'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /trips/{tripId}/changes/{changeId}/revert:
+    parameters:
+      - $ref: '#/components/parameters/TripId'
+      - $ref: '#/components/parameters/ChangeId'
+    post:
+      tags: [Trips]
+      operationId: revertTripChange
+      summary: 還原一筆 Trip 變更
+      description: 只能還原該 Trip 或該行程項目最新的一筆尚未還原的變更。
+      responses:
+        '200':
+          description: 還原後的 Trip 與行程項目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 這筆變更已還原，或之後還有其他變更（`change_not_revertible`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /agent/conversations:
+    get:
+      tags: [Agent]
+      operationId: listAgentConversations
+      summary: 列出與 agent 的對話
+      description: |
+        包含 App 內建立的對話，以及 LINE 與 WhatsApp 官方帳號通道各自的對話。
+        官方帳號通道的對話可以在 App 內接著問下去。
+      parameters:
+        - name: channel
+          in: query
+          description: 依通道篩選。
+          schema:
+            $ref: '#/components/schemas/AgentChannel'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 對話清單，最近有活動的在前
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentConversation'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    post:
+      tags: [Agent]
+      operationId: createAgentConversation
+      summary: 在 App 內開始新的對話
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentConversationCreate'
+      responses:
+        '201':
+          description: 已建立
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ConsentRequired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /agent/conversations/{agentConversationId}:
+    parameters:
+      - $ref: '#/components/parameters/AgentConversationId'
+    get:
+      tags: [Agent]
+      operationId: getAgentConversation
+      summary: 取得對話
+      responses:
+        '200':
+          description: 對話
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Agent]
+      operationId: deleteAgentConversation
+      summary: 刪除對話與其中的訊息
+      description: 任何通道的對話都可以刪除。刪除不影響 agent 的記憶條目，也不影響已建立的 task 與行程。
+      responses:
+        '204':
+          description: 已刪除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /agent/conversations/{agentConversationId}/messages:
+    parameters:
+      - $ref: '#/components/parameters/AgentConversationId'
+    get:
+      tags: [Agent]
+      operationId: listAgentMessages
+      summary: 列出對話中的訊息
+      description: App 斷線後重新連線時，用這個端點取得 agent 在背景完成的回覆。
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 訊息清單，新的在前
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentMessage'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Agent]
+      operationId: sendAgentMessage
+      summary: 傳訊息給 agent，以 SSE 串流接收回覆
+      description: |
+        回應是 `text/event-stream`。每個事件的 `event` 欄位是事件名稱，`data` 欄位是
+        JSON，結構見 `AgentStreamEvent`。事件順序：
+
+        1. `message.started`
+        2. 零到多個 `text.delta`、`tool.started`、`tool.completed`
+        3. `message.completed`，或發生錯誤時的 `error`
+
+        用戶端中途斷線時，agent 會繼續執行到結束並保存回覆，之後可以用訊息列表取得。
+
+        任何通道的對話都可以從 App 傳訊。對官方帳號通道的對話傳訊時，這一輪問答只在 App 內進行：
+        回覆以 SSE 傳給 App，不會送到 LINE 或 WhatsApp，訊息的 `channel` 記為 `app`。
+        之後用戶回到官方帳號繼續對話時，agent 看得到 App 內的這幾輪作為脈絡。
+
+        同一個對話同時只能有一個進行中的回覆，不論是從哪個通道發起的。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentMessageCreate'
+      responses:
+        '200':
+          description: SSE 串流。每個事件的 `data` 是符合 `AgentStreamEvent` 的 JSON。
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AgentStreamEvent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ConsentRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 這個對話已有進行中的回覆（`agent_run_in_progress`）
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /agent/memories:
+    get:
+      tags: [Agent]
+      operationId: listMemories
+      summary: 列出 agent 記住的事
+      description: 記憶條目由 agent 在對話中建立，App、LINE 官方帳號、WhatsApp 官方帳號三個通道共用。
+      responses:
+        '200':
+          description: 所有記憶條目
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MemoryEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /agent/memories/{memoryId}:
+    parameters:
+      - $ref: '#/components/parameters/MemoryId'
+    patch:
+      tags: [Agent]
+      operationId: updateMemory
+      summary: 修改記憶條目
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryUpdate'
+      responses:
+        '200':
+          description: 更新後的記憶條目
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryEntry'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Agent]
+      operationId: deleteMemory
+      summary: 刪除記憶條目
+      responses:
+        '204':
+          description: 已刪除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /oa-bindings:
+    get:
+      tags: [OA Bindings]
+      operationId: listOaBindings
+      summary: 列出官方帳號的綁定狀態
+      description: 每個平台各回傳一筆，不論是否已綁定。
+      responses:
+        '200':
+          description: 各平台的綁定狀態
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OaBinding'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /oa-bindings/{platform}:
+    parameters:
+      - $ref: '#/components/parameters/OaPlatformParam'
+    delete:
+      tags: [OA Bindings]
+      operationId: deleteOaBinding
+      summary: 解除官方帳號綁定
+      responses:
+        '204':
+          description: 已解除，或原本就沒有綁定
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /oa-bindings/{platform}/codes:
+    parameters:
+      - $ref: '#/components/parameters/OaPlatformParam'
+    post:
+      tags: [OA Bindings]
+      operationId: createOaBindingCode
+      summary: 產生一次性綁定碼
+      description: |
+        綁定碼有效 10 分鐘，只能使用一次。回應的 `deepLink` 會開啟官方帳號的聊天室並預填
+        含綁定碼的訊息，用戶按送出即完成綁定。
+
+        產生新的綁定碼會讓同一平台先前尚未使用的綁定碼失效。
+        綁定成功後會取代該平台原有的綁定，並在通知中心留下一則通知。
+      responses:
+        '201':
+          description: 已產生綁定碼
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OaBindingCode'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /notifications:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      summary: 列出通知中心的通知
+      description: 所有推播都會同時寫入通知中心，推播權限關閉時仍然看得到。
+      parameters:
+        - name: unreadOnly
+          in: query
+          description: 只回傳未讀的通知。
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: 通知清單，新的在前
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor, unreadCount]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  nextCursor:
+                    $ref: '#/components/schemas/NextCursor'
+                  unreadCount:
+                    type: integer
+                    minimum: 0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /notifications/{notificationId}/read:
+    parameters:
+      - $ref: '#/components/parameters/NotificationId'
+    post:
+      tags: [Notifications]
+      operationId: markNotificationRead
+      summary: 把通知標為已讀
+      responses:
+        '204':
+          description: 已標為已讀
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      operationId: markAllNotificationsRead
+      summary: 把所有通知標為已讀
+      responses:
+        '204':
+          description: 已全部標為已讀
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /webhooks/line:
+    post:
+      tags: [Webhooks]
+      operationId: receiveLineWebhook
+      summary: 接收 LINE 官方帳號的 webhook 事件
+      description: |
+        由 LINE 平台呼叫。以 `X-Line-Signature` 驗證請求內容後立即回 `200`，
+        實際處理在背景進行，並以事件識別碼去重。
+
+        請求內容的結構由 LINE Messaging API 定義，這裡不重複描述。
+      externalDocs:
+        description: LINE Messaging API reference
+        url: https://developers.line.biz/en/reference/messaging-api/
+      security: []
+      parameters:
+        - name: X-Line-Signature
+          in: header
+          required: true
+          description: 以 channel secret 對請求內容計算的 HMAC-SHA256 簽章（Base64）。
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: LINE webhook 事件，結構見 LINE 的文件。
+              additionalProperties: true
+      responses:
+        '200':
+          description: 已接收
+        '401':
+          description: 簽章驗證失敗
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /webhooks/whatsapp:
+    get:
+      tags: [Webhooks]
+      operationId: verifyWhatsAppWebhook
+      summary: Meta 的 webhook 驗證握手
+      description: |
+        在 Meta 後台設定 webhook 時，Meta 會以 GET 呼叫這個端點。
+        `hub.verify_token` 與後端設定的值相符時，原樣回傳 `hub.challenge`。
+      externalDocs:
+        description: WhatsApp Business Platform webhooks
+        url: https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages
+      security: []
+      parameters:
+        - name: hub.mode
+          in: query
+          required: true
+          description: 固定為 `subscribe`。
+          schema:
+            type: string
+            enum: [subscribe]
+        - name: hub.verify_token
+          in: query
+          required: true
+          description: 在 Meta 後台設定的驗證字串。
+          schema:
+            type: string
+        - name: hub.challenge
+          in: query
+          required: true
+          description: 驗證通過時要原樣回傳的字串。
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 驗證通過，回應內容是 `hub.challenge` 的值
+          content:
+            text/plain:
+              schema:
+                type: string
+        '403':
+          description: 驗證字串不符
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      tags: [Webhooks]
+      operationId: receiveWhatsAppWebhook
+      summary: 接收 WhatsApp 官方帳號的 webhook 事件
+      description: |
+        由 Meta 呼叫。以 `X-Hub-Signature-256` 驗證請求內容後立即回 `200`，
+        實際處理在背景進行，並以訊息識別碼去重。
+
+        請求內容的結構由 WhatsApp Cloud API 定義，這裡不重複描述。
+      externalDocs:
+        description: WhatsApp Business Platform webhooks
+        url: https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/reference/messages
+      security: []
+      parameters:
+        - name: X-Hub-Signature-256
+          in: header
+          required: true
+          description: 以 app secret 對請求內容計算的 HMAC-SHA256 簽章，格式為 `sha256=<hex>`。
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: WhatsApp webhook 事件，結構見 Meta 的文件。
+              additionalProperties: true
+      responses:
+        '200':
+          description: 已接收
+        '401':
+          description: 簽章驗證失敗
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 核心服務簽發的短效 access token。
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: 每頁筆數。
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: 上一頁回應的 `nextCursor`。
+      schema:
+        type: string
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      description: App 在裝置上產生並保存的識別碼，與登入時送出的 `deviceId` 相同。
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    LinkSessionId:
+      name: linkSessionId
+      in: path
+      required: true
+      description: 連結流程的識別碼。
+      schema:
+        type: string
+        format: uuid
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      description: 對話的識別碼。
+      schema:
+        type: string
+        format: uuid
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      description: task 的識別碼。
+      schema:
+        type: string
+        format: uuid
+    ReminderId:
+      name: reminderId
+      in: path
+      required: true
+      description: 提醒的識別碼。
+      schema:
+        type: string
+        format: uuid
+    ChangeId:
+      name: changeId
+      in: path
+      required: true
+      description: 變更紀錄的識別碼。
+      schema:
+        type: string
+        format: uuid
+    ProposalId:
+      name: proposalId
+      in: path
+      required: true
+      description: 待確認項目的識別碼。
+      schema:
+        type: string
+        format: uuid
+    AlertId:
+      name: alertId
+      in: path
+      required: true
+      description: 可疑訊息警告的識別碼。
+      schema:
+        type: string
+        format: uuid
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      description: Trip 的識別碼。
+      schema:
+        type: string
+        format: uuid
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      description: 行程項目的識別碼。
+      schema:
+        type: string
+        format: uuid
+    AgentConversationId:
+      name: agentConversationId
+      in: path
+      required: true
+      description: agent 對話的識別碼。
+      schema:
+        type: string
+        format: uuid
+    MemoryId:
+      name: memoryId
+      in: path
+      required: true
+      description: 記憶條目的識別碼。
+      schema:
+        type: string
+        format: uuid
+    NotificationId:
+      name: notificationId
+      in: path
+      required: true
+      description: 通知的識別碼。
+      schema:
+        type: string
+        format: uuid
+    OaPlatformParam:
+      name: platform
+      in: path
+      required: true
+      description: 官方帳號的平台。
+      schema:
+        $ref: '#/components/schemas/OaPlatform'
+  responses:
+    Unauthorized:
+      description: 沒有附 access token，或 token 無效、已過期（`unauthenticated`、`token_expired`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ConsentRequired:
+      description: 缺少必要的同意，或同意的文件已改版（`consent_required`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: 資源不存在，或不屬於目前的用戶（`not_found`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    SourceExpired:
+      description: 來源訊息已超過保存期並被刪除（`source_expired`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ValidationError:
+      description: 請求的參數或內容不符合規格（`validation_failed`）
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    RateLimited:
+      description: 請求過於頻繁（`rate_limited`）
+      headers:
+        Retry-After:
+          description: 建議等待的秒數。
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      description: 錯誤回應，依 RFC 9457，另加 `code` 等欄位。
+      required: [title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+        title:
+          type: string
+          description: 給人看的簡短說明。
+        status:
+          type: integer
+          description: HTTP 狀態碼。
+        detail:
+          type: string
+          description: 這次錯誤的具體說明。
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        errors:
+          type: array
+          description: '`validation_failed` 時列出各欄位的問題。'
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+                description: 有問題的欄位，以 JSON Pointer 或參數名稱表示。
+              message:
+                type: string
+        requiredConsents:
+          type: array
+          description: '`consent_required` 時列出需要同意的文件與版本。'
+          items:
+            $ref: '#/components/schemas/ConsentDocument'
+    ErrorCode:
+      type: string
+      description: 機器可讀的錯誤碼。之後可能新增，用戶端遇到不認識的值時依 HTTP 狀態碼處理。
+      enum:
+        - unauthenticated
+        - token_expired
+        - token_reuse_detected
+        - invalid_id_token
+        - not_invited
+        - consent_required
+        - consent_version_outdated
+        - not_found
+        - validation_failed
+        - rate_limited
+        - line_not_linked
+        - line_already_linked
+        - link_session_in_progress
+        - connector_unavailable
+        - source_expired
+        - reminder_limit_reached
+        - reminder_not_editable
+        - change_not_revertible
+        - proposal_not_pending
+        - items_out_of_range
+        - agent_run_in_progress
+        - invalid_signature
+        - internal_error
+    NextCursor:
+      type: [string, 'null']
+      description: 下一頁的游標；沒有下一頁時為 `null`。
+    LocalTime:
+      type: string
+      description: 當地時間，24 小時制 `HH:mm`。
+      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      examples: ['14:30']
+    TimeZone:
+      type: string
+      description: IANA 時區名稱。
+      examples: [Asia/Taipei]
+    ConsentType:
+      type: string
+      description: |
+        - `terms_and_privacy`：服務條款與隱私政策
+        - `line_unofficial_risk`：LINE 非官方連線的風險告知
+        - `llm_processing_and_transfer`：對話內容送交 LLM 處理與跨境傳輸
+      enum:
+        - terms_and_privacy
+        - line_unofficial_risk
+        - llm_processing_and_transfer
+    ConsentDocument:
+      type: object
+      required: [type, version, title, url, publishedAt]
+      properties:
+        type:
+          $ref: '#/components/schemas/ConsentType'
+        version:
+          type: string
+          description: 文件版本。
+        title:
+          type: string
+        url:
+          type: string
+          format: uri
+          description: 文件全文的網址。
+        publishedAt:
+          type: string
+          format: date-time
+    ConsentAcceptance:
+      type: object
+      required: [type, version]
+      properties:
+        type:
+          $ref: '#/components/schemas/ConsentType'
+        version:
+          type: string
+    ConsentRecord:
+      type: object
+      required: [type, version, acceptedAt]
+      properties:
+        type:
+          $ref: '#/components/schemas/ConsentType'
+        version:
+          type: string
+        acceptedAt:
+          type: string
+          format: date-time
+    GoogleSignInRequest:
+      type: object
+      required: [idToken, deviceId]
+      properties:
+        idToken:
+          type: string
+          description: Google 登入流程取得的 ID token。
+        deviceId:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: App 在裝置上產生並保存的識別碼，用來區分各裝置的 token。
+        acceptedConsents:
+          type: array
+          description: 首次登入時必須附上對必要文件現行版本的同意。
+          items:
+            $ref: '#/components/schemas/ConsentAcceptance'
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+    TokenPair:
+      type: object
+      required: [accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt]
+      properties:
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+    AuthResponse:
+      type: object
+      required: [tokens, user, isNewUser]
+      properties:
+        tokens:
+          $ref: '#/components/schemas/TokenPair'
+        user:
+          $ref: '#/components/schemas/User'
+        isNewUser:
+          type: boolean
+          description: 這次登入是否建立了新帳號。
+    User:
+      type: object
+      required: [id, email, displayName, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+          description: 只作為顯示與聯絡用途，不是帳號的主鍵。
+        displayName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    Me:
+      type: object
+      required: [user, pendingConsents]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        pendingConsents:
+          type: array
+          description: 需要用戶（重新）同意的文件。不為空時，部分功能會回 `consent_required`。
+          items:
+            $ref: '#/components/schemas/ConsentDocument'
+    QuietHours:
+      type: object
+      description: 勿擾時段，以用戶的時區解讀。`start` 晚於 `end` 表示跨日。
+      required: [start, end]
+      properties:
+        start:
+          $ref: '#/components/schemas/LocalTime'
+        end:
+          $ref: '#/components/schemas/LocalTime'
+    NotificationPreferences:
+      type: object
+      description: 各類推播的開關。關閉後仍會寫入通知中心。
+      required: [taskReminders, scamAlerts, connectionStatus, agentResults]
+      properties:
+        taskReminders:
+          type: boolean
+        scamAlerts:
+          type: boolean
+        connectionStatus:
+          type: boolean
+          description: LINE 連線失效的通知。
+        agentResults:
+          type: boolean
+          description: 官方帳號通道的長任務完成通知。
+    Settings:
+      type: object
+      required: [retentionDays, timeZone, quietHours, notifications]
+      properties:
+        retentionDays:
+          $ref: '#/components/schemas/RetentionDays'
+        timeZone:
+          $ref: '#/components/schemas/TimeZone'
+        quietHours:
+          $ref: '#/components/schemas/QuietHours'
+        notifications:
+          $ref: '#/components/schemas/NotificationPreferences'
+    SettingsUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        retentionDays:
+          $ref: '#/components/schemas/RetentionDays'
+        timeZone:
+          $ref: '#/components/schemas/TimeZone'
+        quietHours:
+          $ref: '#/components/schemas/QuietHours'
+        notifications:
+          $ref: '#/components/schemas/NotificationPreferences'
+    RetentionDays:
+      type: integer
+      description: 原始訊息的保存天數。
+      enum: [7, 30, 90]
+      default: 90
+    AccountDeletionRequest:
+      type: object
+      required: [idToken]
+      properties:
+        idToken:
+          type: string
+          description: 為了這次刪除而新取得的 Google ID token，必須屬於目前的帳號。
+    PushTokenRequest:
+      type: object
+      required: [platform, fcmToken]
+      properties:
+        platform:
+          type: string
+          enum: [ios, android]
+        fcmToken:
+          type: string
+          description: Firebase Cloud Messaging 的 registration token。
+    LineConnection:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: |
+            - `not_linked`：尚未連結
+            - `connected`：連線中
+            - `reconnecting`：暫時斷線，正在重連
+            - `expired`：連線已失效，需要重新連結
+          enum: [not_linked, connected, reconnecting, expired]
+        linkedAt:
+          type: [string, 'null']
+          format: date-time
+        lastEventAt:
+          type: [string, 'null']
+          format: date-time
+          description: 最近一次從 LINE 收到事件的時間。
+    LineLinkSession:
+      type: object
+      description: |
+        連結流程。App 依 `status` 決定顯示的內容，不假設各狀態出現的固定順序：
+        有 `qrPayload` 就顯示 QR code，有 `verificationCode` 就顯示驗證碼。
+      required: [id, status, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: |
+            - `pending`：等待讀取服務準備
+            - `awaiting_scan`：等待用戶用手機 LINE 掃描 QR code
+            - `awaiting_verification`：等待用戶在手機 LINE 完成驗證
+            - `completed`：連結成功
+            - `failed`：連結失敗，見 `failureReason`
+            - `expired`：逾時
+            - `cancelled`：用戶取消
+          enum:
+            - pending
+            - awaiting_scan
+            - awaiting_verification
+            - completed
+            - failed
+            - expired
+            - cancelled
+        qrPayload:
+          type: [string, 'null']
+          description: 要編成 QR code 的內容。
+        verificationCode:
+          type: [string, 'null']
+          description: 要顯示給用戶、讓他在手機 LINE 上確認的驗證碼。
+        failureReason:
+          type: [string, 'null']
+          description: 失敗時給用戶看的說明。
+        expiresAt:
+          type: string
+          format: date-time
+    ConversationType:
+      type: string
+      description: |
+        - `direct`：與一般帳號的一對一對話
+        - `group`：群組或多人聊天室
+        - `official_account`：與其他官方帳號的對話
+      enum: [direct, group, official_account]
+    ConversationRef:
+      type: object
+      description: 對話的精簡資訊。
+      required: [id, name, type]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/ConversationType'
+    Conversation:
+      type: object
+      required: [id, platform, name, type, ingestion]
+      properties:
+        id:
+          type: string
+          format: uuid
+        platform:
+          type: string
+          description: 對話所在的平台。MVP 只有 `line`。
+          enum: [line]
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/ConversationType'
+        ingestion:
+          type: object
+          required: [enabled, source]
+          properties:
+            enabled:
+              type: boolean
+              description: 目前是否讀取這個對話的訊息。
+            source:
+              type: string
+              description: '`default` 表示套用該類型的預設值，`user` 表示用戶設定過。'
+              enum: [default, user]
+        lastMessageAt:
+          type: [string, 'null']
+          format: date-time
+    ConversationUpdate:
+      type: object
+      required: [ingestionEnabled]
+      properties:
+        ingestionEnabled:
+          type: [boolean, 'null']
+          description: '`true` 讀取、`false` 不讀取、`null` 回到該類型的預設值。'
+    TaskStatus:
+      type: string
+      enum: [active, completed, cancelled]
+    TaskSource:
+      type: string
+      description: |
+        - `pipeline`：訊息管線從 LINE 對話抽出
+        - `user`：用戶手動建立
+        - `agent`：agent 依用戶指示建立
+      enum: [pipeline, user, agent]
+    TaskCategory:
+      type: string
+      description: 任務類型，AI 用它決定提醒的提前量。
+      enum:
+        - payment
+        - meeting
+        - appointment
+        - deadline
+        - travel
+        - social
+        - errand
+        - other
+    TaskFields:
+      type: object
+      description: task 可以被修改的欄位。
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        date:
+          type: string
+          format: date
+          description: 到期或發生的日期，以用戶的時區解讀。
+        time:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+          description: 當地時間；整天的 task 為 `null`。
+        allDay:
+          type: boolean
+        category:
+          $ref: '#/components/schemas/TaskCategory'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+    Task:
+      type: object
+      description: task 只包含 AI 整理過的欄位，不含 LINE 訊息原文。
+      required:
+        - id
+        - title
+        - date
+        - time
+        - allDay
+        - category
+        - status
+        - source
+        - userModified
+        - hasSource
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        date:
+          type: string
+          format: date
+        time:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        allDay:
+          type: boolean
+        category:
+          $ref: '#/components/schemas/TaskCategory'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        source:
+          $ref: '#/components/schemas/TaskSource'
+        confidence:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+          description: 管線抽取時的信心分數；非管線來源為 `null`。
+        userModified:
+          type: boolean
+          description: 是否由用戶（或 agent 依用戶指示）建立或修改過。為 `true` 時 AI 不會自動覆蓋。
+        hasSource:
+          type: boolean
+          description: 來源訊息是否仍在保存期內，可以用 `/tasks/{taskId}/source` 取得。
+        conversation:
+          oneOf:
+            - $ref: '#/components/schemas/ConversationRef'
+            - type: 'null'
+          description: 來源的 LINE 對話；非管線來源為 `null`。
+        tripId:
+          type: [string, 'null']
+          format: uuid
+          description: 關聯的 Trip。
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TaskCreate:
+      type: object
+      required: [title, date]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        date:
+          type: string
+          format: date
+        time:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        allDay:
+          type: boolean
+          default: false
+        category:
+          $ref: '#/components/schemas/TaskCategory'
+        tripId:
+          type: [string, 'null']
+          format: uuid
+        reminderMode:
+          type: string
+          description: '`ai` 由 AI 決定提醒時間，`manual` 使用 `reminders`，`none` 不設提醒。'
+          enum: [ai, manual, none]
+          default: ai
+        reminders:
+          type: array
+          description: '`reminderMode` 為 `manual` 時使用。'
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/ReminderInput'
+    TaskUpdate:
+      description: 只送出要變更的欄位。
+      allOf:
+        - $ref: '#/components/schemas/TaskFields'
+        - type: object
+          minProperties: 1
+          properties:
+            tripId:
+              type: [string, 'null']
+              format: uuid
+    Reminder:
+      type: object
+      required: [id, taskId, remindAt, status, origin, userModified]
+      properties:
+        id:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        remindAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [scheduled, sent, cancelled]
+        origin:
+          type: string
+          description: '`ai` 由 AI 產生，`user` 由用戶設定。'
+          enum: [ai, user]
+        userModified:
+          type: boolean
+          description: 用戶是否調整過這個提醒。
+    ReminderInput:
+      type: object
+      required: [remindAt]
+      properties:
+        remindAt:
+          type: string
+          format: date-time
+    ChangeActor:
+      type: string
+      description: |
+        - `pipeline`：訊息管線依信心分數自動套用
+        - `agent`：agent 依用戶指示
+        - `user`：用戶在 App 操作
+      enum: [pipeline, agent, user]
+    TaskChange:
+      type: object
+      required: [id, actor, before, after, createdAt, revertedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor:
+          $ref: '#/components/schemas/ChangeActor'
+        before:
+          $ref: '#/components/schemas/TaskFields'
+        after:
+          $ref: '#/components/schemas/TaskFields'
+        createdAt:
+          type: string
+          format: date-time
+        revertedAt:
+          type: [string, 'null']
+          format: date-time
+    ProposalKind:
+      type: string
+      description: |
+        - `create`：建議新增一個 task
+        - `update`：建議修改既有的 task
+        - `cancel`：建議取消既有的 task
+      enum: [create, update, cancel]
+    ProposalStatus:
+      type: string
+      description: '`superseded` 表示同一個 task 有了更新的建議，這一筆不再有效。'
+      enum: [pending, accepted, rejected, superseded]
+    TaskProposal:
+      type: object
+      description: |
+        待確認項目。出現的原因有兩種：AI 的信心分數未達門檻，或目標 task 是用戶修改過的。
+        不含 LINE 訊息原文。
+      required:
+        - id
+        - kind
+        - taskId
+        - proposed
+        - current
+        - confidence
+        - status
+        - hasSource
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/ProposalKind'
+        taskId:
+          type: [string, 'null']
+          format: uuid
+          description: 建議修改或取消的 task；`create` 為 `null`。
+        proposed:
+          $ref: '#/components/schemas/TaskFields'
+        current:
+          oneOf:
+            - $ref: '#/components/schemas/TaskFields'
+            - type: 'null'
+          description: 目標 task 目前的值，供對照；`create` 為 `null`。
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        status:
+          $ref: '#/components/schemas/ProposalStatus'
+        hasSource:
+          type: boolean
+          description: 來源訊息是否仍在保存期內。
+        conversation:
+          oneOf:
+            - $ref: '#/components/schemas/ConversationRef'
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+    ProposalAcceptRequest:
+      type: object
+      properties:
+        overrides:
+          $ref: '#/components/schemas/TaskFields'
+    ProposalAcceptResponse:
+      type: object
+      required: [proposal, task]
+      properties:
+        proposal:
+          $ref: '#/components/schemas/TaskProposal'
+        task:
+          $ref: '#/components/schemas/Task'
+    SourceContext:
+      type: object
+      description: |
+        來源訊息與前後文。這是 API 中唯一直接回傳 LINE 訊息原文的資料結構；
+        agent 的回覆（`AgentMessage.text`）也可能引用檢索到的原文。
+      required: [conversation, messages]
+      properties:
+        conversation:
+          $ref: '#/components/schemas/ConversationRef'
+        messages:
+          type: array
+          description: 依時間排序。
+          items:
+            $ref: '#/components/schemas/SourceMessage'
+    SourceMessage:
+      type: object
+      required: [id, senderName, direction, contentType, text, sentAt, isSource]
+      properties:
+        id:
+          type: string
+          format: uuid
+        senderName:
+          type: string
+        direction:
+          type: string
+          description: '`incoming` 是別人傳的，`outgoing` 是用戶自己傳的。'
+          enum: [incoming, outgoing]
+        contentType:
+          type: string
+          description: 非文字訊息只記錄類型，沒有內容。
+          enum: [text, image, video, audio, file, sticker, location, other]
+        text:
+          type: [string, 'null']
+          description: 文字內容；非文字訊息為 `null`。
+        sentAt:
+          type: string
+          format: date-time
+        isSource:
+          type: boolean
+          description: 是否為產生該 task 或警告的訊息；其餘是前後文。
+    ScamCategory:
+      type: string
+      description: 台灣常見的詐騙手法分類。
+      enum:
+        - fake_investment
+        - romance
+        - installment_cancellation
+        - guess_who
+        - impersonating_authority
+        - impersonating_acquaintance
+        - fake_marketplace
+        - phishing_link
+        - fake_prize
+        - other
+    ScamAlertLevel:
+      type: string
+      description: '`high` 會發推播，`medium` 只在 App 內標示。'
+      enum: [high, medium]
+    ScamAlertStatus:
+      type: string
+      enum: [open, dismissed]
+    ScamFeedbackVerdict:
+      type: string
+      enum: [not_scam, confirmed_scam]
+    ScamAlert:
+      type: object
+      description: 可疑訊息警告。`reason` 是 AI 寫的說明，不引用訊息原文。
+      required:
+        - id
+        - conversation
+        - category
+        - level
+        - confidence
+        - reason
+        - status
+        - feedback
+        - hasSource
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation:
+          $ref: '#/components/schemas/ConversationRef'
+        category:
+          $ref: '#/components/schemas/ScamCategory'
+        level:
+          $ref: '#/components/schemas/ScamAlertLevel'
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        reason:
+          type: string
+          description: 給用戶看的簡短理由。
+        status:
+          $ref: '#/components/schemas/ScamAlertStatus'
+        feedback:
+          oneOf:
+            - $ref: '#/components/schemas/ScamFeedbackVerdict'
+            - type: 'null'
+          description: 用戶的回報；尚未回報為 `null`。
+        hasSource:
+          type: boolean
+          description: 來源訊息是否仍在保存期內。
+        createdAt:
+          type: string
+          format: date-time
+    ScamAlertUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/ScamAlertStatus'
+    ScamFeedbackRequest:
+      type: object
+      required: [verdict]
+      properties:
+        verdict:
+          $ref: '#/components/schemas/ScamFeedbackVerdict'
+    TripStatus:
+      type: string
+      enum: [planning, confirmed, completed, cancelled]
+    Trip:
+      type: object
+      required:
+        - id
+        - name
+        - destination
+        - startDate
+        - endDate
+        - timeZone
+        - status
+        - notes
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        destination:
+          type: string
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        timeZone:
+          $ref: '#/components/schemas/TimeZone'
+        status:
+          $ref: '#/components/schemas/TripStatus'
+        notes:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TripCreate:
+      type: object
+      required: [name, destination, startDate, endDate, timeZone]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        destination:
+          type: string
+          minLength: 1
+          maxLength: 200
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+          description: 不得早於 `startDate`。
+        timeZone:
+          $ref: '#/components/schemas/TimeZone'
+        notes:
+          type: [string, 'null']
+          maxLength: 5000
+    TripUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        destination:
+          type: string
+          minLength: 1
+          maxLength: 200
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        timeZone:
+          $ref: '#/components/schemas/TimeZone'
+        status:
+          $ref: '#/components/schemas/TripStatus'
+        notes:
+          type: [string, 'null']
+          maxLength: 5000
+    TripDetail:
+      allOf:
+        - $ref: '#/components/schemas/Trip'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              description: 全部行程項目，依日期與當日順序排序。
+              items:
+                $ref: '#/components/schemas/ItineraryItem'
+    ItineraryItemType:
+      type: string
+      enum: [attraction, dining, transport, lodging, other]
+    Place:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        address:
+          type: [string, 'null']
+        latitude:
+          type: [number, 'null']
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: [number, 'null']
+          minimum: -180
+          maximum: 180
+        placeId:
+          type: [string, 'null']
+          description: Google Maps Platform 的地點 ID。
+    Transport:
+      type: object
+      description: 交通類行程項目的細節。
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [walk, transit, drive, taxi, train, flight, other]
+        origin:
+          oneOf:
+            - $ref: '#/components/schemas/Place'
+            - type: 'null'
+        destination:
+          oneOf:
+            - $ref: '#/components/schemas/Place'
+            - type: 'null'
+        estimatedMinutes:
+          type: [integer, 'null']
+          minimum: 0
+    ItineraryItemFields:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          description: 必須在 Trip 的日期範圍內。
+        startTime:
+          $ref: '#/components/schemas/LocalTime'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        type:
+          $ref: '#/components/schemas/ItineraryItemType'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        notes:
+          type: [string, 'null']
+          maxLength: 5000
+        place:
+          oneOf:
+            - $ref: '#/components/schemas/Place'
+            - type: 'null'
+        transport:
+          oneOf:
+            - $ref: '#/components/schemas/Transport'
+            - type: 'null'
+        position:
+          type: integer
+          minimum: 0
+          description: 當日內的順序，從 0 開始。
+    ItineraryItem:
+      description: 行程項目。時間以所屬 Trip 的時區解讀。
+      allOf:
+        - $ref: '#/components/schemas/ItineraryItemFields'
+        - type: object
+          required: [id, tripId, date, startTime, endTime, type, title, position]
+          properties:
+            id:
+              type: string
+              format: uuid
+            tripId:
+              type: string
+              format: uuid
+    ItineraryItemCreate:
+      allOf:
+        - $ref: '#/components/schemas/ItineraryItemFields'
+        - type: object
+          required: [date, startTime, type, title]
+    ItineraryItemUpdate:
+      description: 只送出要變更的欄位。
+      allOf:
+        - $ref: '#/components/schemas/ItineraryItemFields'
+        - type: object
+          minProperties: 1
+    DayOrderRequest:
+      type: object
+      required: [itemIds]
+      properties:
+        itemIds:
+          type: array
+          description: 該日所有行程項目的識別碼，依新的順序排列。
+          items:
+            type: string
+            format: uuid
+    TripChange:
+      type: object
+      required: [id, itemId, actor, before, after, createdAt, revertedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        itemId:
+          type: [string, 'null']
+          format: uuid
+          description: 被變更的行程項目；變更的是 Trip 本身時為 `null`。
+        actor:
+          $ref: '#/components/schemas/ChangeActor'
+        before:
+          type: [object, 'null']
+          description: 變更前的欄位值；新增時為 `null`。
+          additionalProperties: true
+        after:
+          type: [object, 'null']
+          description: 變更後的欄位值；刪除時為 `null`。
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        revertedAt:
+          type: [string, 'null']
+          format: date-time
+    CalendarResponse:
+      type: object
+      required: [from, to, tasks, trips, itineraryItems]
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        trips:
+          type: array
+          description: 與範圍重疊的 Trip，在月與週檢視顯示成跨日區塊。
+          items:
+            $ref: '#/components/schemas/Trip'
+        itineraryItems:
+          type: array
+          description: 範圍內的行程項目，在日檢視與 task 並排。
+          items:
+            $ref: '#/components/schemas/ItineraryItem'
+    AgentChannel:
+      type: string
+      description: |
+        - `app`：App 內的對話
+        - `line_oa`：LINE 官方帳號
+        - `whatsapp_oa`：WhatsApp 官方帳號
+      enum: [app, line_oa, whatsapp_oa]
+    AgentConversation:
+      type: object
+      required: [id, channel, title, createdAt, lastMessageAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel:
+          allOf:
+            - $ref: '#/components/schemas/AgentChannel'
+          description: 這個對話所屬的通道，也就是它是在哪裡開始的。個別訊息實際發生的通道見 `AgentMessage.channel`。
+        title:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+        lastMessageAt:
+          type: [string, 'null']
+          format: date-time
+    AgentConversationCreate:
+      type: object
+      properties:
+        title:
+          type: [string, 'null']
+          maxLength: 200
+    AgentMessage:
+      type: object
+      required: [id, conversationId, role, channel, text, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant]
+        channel:
+          allOf:
+            - $ref: '#/components/schemas/AgentChannel'
+          description: 這則訊息實際發生的通道。官方帳號通道的對話中，在 App 內接續的訊息為 `app`。
+        text:
+          type: string
+          description: |
+            訊息內容。進行中的回覆可能是空字串。
+            agent 檢索歷史訊息後，回覆中可能引用 LINE 訊息原文。
+        status:
+          type: string
+          description: '`in_progress` 表示 agent 還在產生這則回覆。'
+          enum: [completed, in_progress, failed]
+        createdAt:
+          type: string
+          format: date-time
+    AgentMessageCreate:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 8000
+    AgentStreamEvent:
+      description: SSE 事件的 `data` 內容。`type` 與 SSE 的 `event` 欄位相同。
+      oneOf:
+        - $ref: '#/components/schemas/AgentMessageStartedEvent'
+        - $ref: '#/components/schemas/AgentTextDeltaEvent'
+        - $ref: '#/components/schemas/AgentToolStartedEvent'
+        - $ref: '#/components/schemas/AgentToolCompletedEvent'
+        - $ref: '#/components/schemas/AgentMessageCompletedEvent'
+        - $ref: '#/components/schemas/AgentErrorEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          message.started: '#/components/schemas/AgentMessageStartedEvent'
+          text.delta: '#/components/schemas/AgentTextDeltaEvent'
+          tool.started: '#/components/schemas/AgentToolStartedEvent'
+          tool.completed: '#/components/schemas/AgentToolCompletedEvent'
+          message.completed: '#/components/schemas/AgentMessageCompletedEvent'
+          error: '#/components/schemas/AgentErrorEvent'
+    AgentMessageStartedEvent:
+      type: object
+      required: [type, userMessageId, assistantMessageId]
+      properties:
+        type:
+          type: string
+          const: message.started
+        userMessageId:
+          type: string
+          format: uuid
+        assistantMessageId:
+          type: string
+          format: uuid
+    AgentTextDeltaEvent:
+      type: object
+      required: [type, delta]
+      properties:
+        type:
+          type: string
+          const: text.delta
+        delta:
+          type: string
+          description: 新增的一段文字。
+    AgentToolStartedEvent:
+      type: object
+      required: [type, toolCallId, tool]
+      properties:
+        type:
+          type: string
+          const: tool.started
+        toolCallId:
+          type: string
+        tool:
+          type: string
+          description: 工具名稱，供 App 顯示進度，例如「正在查詢地點」。不含工具的參數。
+    AgentToolCompletedEvent:
+      type: object
+      required: [type, toolCallId, tool, ok]
+      properties:
+        type:
+          type: string
+          const: tool.completed
+        toolCallId:
+          type: string
+        tool:
+          type: string
+        ok:
+          type: boolean
+          description: 工具是否執行成功。
+    AgentMessageCompletedEvent:
+      type: object
+      required: [type, message]
+      properties:
+        type:
+          type: string
+          const: message.completed
+        message:
+          $ref: '#/components/schemas/AgentMessage'
+    AgentErrorEvent:
+      type: object
+      required: [type, code, message]
+      properties:
+        type:
+          type: string
+          const: error
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+    MemoryEntry:
+      type: object
+      required: [id, content, sourceChannel, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          description: 一則簡短的事實或偏好。
+        sourceChannel:
+          $ref: '#/components/schemas/AgentChannel'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    MemoryUpdate:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 500
+    OaPlatform:
+      type: string
+      enum: [line, whatsapp]
+    OaBinding:
+      type: object
+      description: 不回傳對方平台上的用戶識別碼。
+      required: [platform, bound, boundAt]
+      properties:
+        platform:
+          $ref: '#/components/schemas/OaPlatform'
+        bound:
+          type: boolean
+        boundAt:
+          type: [string, 'null']
+          format: date-time
+    OaBindingCode:
+      type: object
+      required: [platform, code, deepLink, expiresAt]
+      properties:
+        platform:
+          $ref: '#/components/schemas/OaPlatform'
+        code:
+          type: string
+          description: 一次性綁定碼。只在這次回應中出現，後端只保存雜湊值。
+        deepLink:
+          type: string
+          format: uri
+          description: 開啟官方帳號聊天室並預填含綁定碼訊息的連結。
+        expiresAt:
+          type: string
+          format: date-time
+    NotificationType:
+      type: string
+      description: |
+        - `task_reminder`：task 到期提醒
+        - `scam_alert`：可疑訊息警告
+        - `line_connection_expired`：LINE 連線失效
+        - `agent_result_ready`：官方帳號通道的長任務已完成
+        - `oa_bound`：官方帳號綁定成功
+      enum:
+        - task_reminder
+        - scam_alert
+        - line_connection_expired
+        - agent_result_ready
+        - oa_bound
+    Notification:
+      type: object
+      description: 通知只有概述，不含 LINE 訊息原文。
+      required: [id, type, title, ref, readAt, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        title:
+          type: string
+        ref:
+          oneOf:
+            - $ref: '#/components/schemas/NotificationRef'
+            - type: 'null'
+          description: 通知指向的資源，供 App 導向對應畫面。
+        readAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    NotificationRef:
+      type: object
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [task, scam_alert, agent_conversation, line_connection, oa_binding]
+        id:
+          type: [string, 'null']
+          description: 資源的識別碼；沒有單一識別碼的資源（例如 LINE 連線）為 `null`。
