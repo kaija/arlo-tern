@@ -19,6 +19,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:migrate": "node --env-file-if-exists=.env packages/shared/dist/db/migrate-main.js",
+    "api:generate": "openapi-typescript docs/api/openapi.yaml --output packages/shared/src/api/openapi.generated.ts --default-non-nullable false --empty-objects-unknown",
+    "api:check": "pnpm run api:generate --check",
     "prepare": "node .husky/install.mjs"
   },
   "lint-staged": {
@@ -37,6 +39,7 @@
     "globals": "^17.14.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",
+    "openapi-typescript": "7.13.0",
     "prettier": "^3.10.1",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.2",

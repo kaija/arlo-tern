@@ -26,10 +26,12 @@ export default defineConfig({
       provider: 'v8',
       include: ['packages/*/src/**/*.ts', 'services/*/src/**/*.ts'],
       // Entry files only wire things together and start the process; logic lives in tested
-      // modules. `testing/` directories hold support code for tests.
+      // modules. `testing/` directories hold support code for tests. `*.generated.ts` is
+      // written by a tool and holds types only.
       exclude: [
         '**/*.test.ts',
         '**/testing/**',
+        '**/*.generated.ts',
         'services/*/src/main.ts',
         'packages/shared/src/db/migrate-main.ts',
       ],

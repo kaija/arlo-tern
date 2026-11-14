@@ -5,7 +5,8 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  globalIgnores(['**/dist/', '**/coverage/', 'docs/']),
+  // `*.generated.ts` is written by a tool (`pnpm api:generate`) and must stay as the tool wrote it.
+  globalIgnores(['**/dist/', '**/coverage/', 'docs/', '**/*.generated.ts']),
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
   {

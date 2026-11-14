@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./api": {
+      "@arlo-tern/source": "./src/api/index.ts",
+      "types": "./dist/api/index.d.ts",
+      "default": "./dist/api/index.js"
+    },
     "./config": {
       "@arlo-tern/source": "./src/config/index.ts",
       "types": "./dist/config/index.d.ts",

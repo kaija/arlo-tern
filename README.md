@@ -93,10 +93,11 @@ pnpm build            # 建置到各套件的 dist/
 pnpm vitest run services/core/src/index.test.ts
 ```
 
-修改 API 規格後檢查（warning 也會讓指令失敗）：
+修改 API 規格後檢查（warning 也會讓指令失敗），再重新產生核心服務與 App 共用的型別（`packages/shared/src/api/openapi.generated.ts`），與規格放在同一個 commit：
 
 ```bash
 npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
+pnpm api:generate     # pnpm api:check 只檢查型別是否與規格同步，不改寫檔案
 ```
 
-CI（GitHub Actions，`.github/workflows/ci.yml`）在每個 PR 與每次 push 到 `main` 時執行上面的格式檢查、lint、型別檢查、含覆蓋率的測試（含資料庫測試）、建置、套用 migration 與 API 規格檢查，並試建兩個服務的映像。push 之前先在本機跑過。
+CI（GitHub Actions，`.github/workflows/ci.yml`）在每個 PR 與每次 push 到 `main` 時執行上面的格式檢查、lint、型別檢查、含覆蓋率的測試（含資料庫測試）、建置、套用 migration、API 規格檢查與產生的型別是否和規格同步，並試建兩個服務的映像。push 之前先在本機跑過。

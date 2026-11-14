@@ -2,3 +2,10 @@ packages:
   - apps/*
   - services/*
   - packages/*
+
+# openapi-typescript 7.13 declares TypeScript ^5.x as its peer and has no release that names
+# 6.0. It was run under 6.0.3 and 5.9.3 against docs/api/openapi.yaml and wrote the same file
+# (design §13), so the mismatch is accepted here instead of being reported on every install.
+peerDependencyRules:
+  allowedVersions:
+    'openapi-typescript>typescript': '6.0'

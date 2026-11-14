@@ -4,3 +4,5 @@ docs/
 pnpm-lock.yaml
 dist/
 coverage/
+# Written by `pnpm api:generate`; `pnpm api:check` compares it byte for byte.
+*.generated.ts

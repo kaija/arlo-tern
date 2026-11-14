@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**The repository holds the design documents, an empty monorepo scaffold (`FND-01`), a local Docker Compose stack (`FND-02`), a CI workflow (`FND-03`), the database schema with its migrations (`FND-04`), the configuration loader (`FND-07`) and the connector interface with its fake implementation (`CON-01`). No product code exists yet;** apart from the loader, the schema and the connector interface the packages contain placeholders only, and each service runs a placeholder process that validates its configuration and then waits. Nothing reads or writes the tables yet, and nothing implements the connector interface for a real platform. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
+**The repository holds the design documents, an empty monorepo scaffold (`FND-01`), a local Docker Compose stack (`FND-02`), a CI workflow (`FND-03`), the database schema with its migrations (`FND-04`), the configuration loader (`FND-07`), the connector interface with its fake implementation (`CON-01`) and the API types generated from the OpenAPI spec (`FND-09`). No product code exists yet;** apart from the loader, the schema, the connector interface and the generated types the packages contain placeholders only, and each service runs a placeholder process that validates its configuration and then waits. Nothing reads or writes the tables yet, nothing implements the connector interface for a real platform, and nothing serves or calls the API. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
 
 **The app is the primary surface.** The two official-account channels stay in the MVP but are its lowest-priority work: the beta launches app-only (`LCH-02`) and the channels open later behind a second gate (`LCH-03`). Their work items are marked `[OA]` in `docs/plan/work-items.md`. No item without that mark may depend on one that has it, and no app feature may require an official-account channel.
 
@@ -32,6 +32,8 @@ pnpm test             # Vitest, all packages
 pnpm test:coverage    # fails under 80 % coverage
 pnpm build            # tsc -b into each package's dist/; pnpm clean removes it
 pnpm db:migrate       # apply pending database migrations; see "Database" for what it needs
+pnpm api:generate     # rewrite the API types from docs/api/openapi.yaml; see "API types"
+pnpm api:check        # fail when the committed API types are not what the spec generates
 ```
 
 Run a single test by file, by package, or by test name:
@@ -53,13 +55,14 @@ docker compose down           # stop and remove the containers; add -v to also d
 
 PostgreSQL is published on `127.0.0.1:5432` (user, password and database are development-only defaults in `docker-compose.yml`; override them with a `.env` copied from `.env.example`). A changed user, password or database name only applies to an empty volume, so run `docker compose down -v` first. Compose hands the same database settings to both services. The services publish no ports yet.
 
-Lint the OpenAPI spec after every edit to it; it must report no errors and no warnings. `redocly.yaml` turns warnings into errors, so either one fails the command:
+Lint the OpenAPI spec after every edit to it; it must report no errors and no warnings. `redocly.yaml` turns warnings into errors, so either one fails the command. Then regenerate the API types and commit them with the spec ("API types"):
 
 ```bash
 npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
+pnpm api:generate
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs on every pull request and on every push to `main`. Its `check` job has a `postgres:18` service container and runs, from a frozen-lockfile install: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test:coverage` (with `TEST_DATABASE_URL` pointing at the service container), `pnpm build`, `pnpm db:migrate` twice (the second run must apply nothing) and the OpenAPI lint above. Its `images` job builds both service images with `docker build` and discards them. Run the same commands locally before pushing. **Keep the workflow and this section in sync:** when a command here changes or a new check is added, change the workflow in the same commit.
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs on every pull request and on every push to `main`. Its `check` job has a `postgres:18` service container and runs, from a frozen-lockfile install: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test:coverage` (with `TEST_DATABASE_URL` pointing at the service container), `pnpm build`, `pnpm db:migrate` twice (the second run must apply nothing), the OpenAPI lint above and `pnpm api:check`. Its `images` job builds both service images with `docker build` and discards them. Run the same commands locally before pushing. **Keep the workflow and this section in sync:** when a command here changes or a new check is added, change the workflow in the same commit.
 
 Things to know about the toolchain (choices are recorded in design §13):
 
@@ -69,6 +72,7 @@ Things to know about the toolchain (choices are recorded in design §13):
 - `pnpm test` includes the database tests, which need a PostgreSQL server; without one they are skipped. Read "Database" before trusting a green run.
 - Prettier skips `docs/` and all Markdown; project documents stay hand-formatted.
 - The pre-commit hook runs ESLint and Prettier on staged code files and blocks the commit on lint errors.
+- A file named `*.generated.ts` is written by a tool and committed as the tool wrote it. Prettier, ESLint and coverage skip it, so the pre-commit hook leaves it alone; `tsc` still checks it. Never edit one by hand.
 - Each service starts from `src/main.ts`; the migration command starts from `packages/shared/src/db/migrate-main.ts`. Entry files only wire things together and are excluded from coverage; put logic in modules that have tests.
 - One `Dockerfile` builds either service (`--build-arg SERVICE=connector|core`). An image contains only that service, `packages/shared` and their production dependencies, and runs as the non-root `node` user. A new workspace package that a service depends on must be copied in the `Dockerfile` as well.
 - `docker-compose.yml` is the local stack only. The production stack is a separate file (`OPS-02`). Keep exactly one `connector` and publish no ports for it. Its `migrate` service is a one-shot step, not a fourth long-lived container: it exits with code 0 and the two services wait for that.
@@ -143,6 +147,28 @@ Database tests:
 - **Without a server the database tests are skipped, and the run is still green.** A warning says so, but Vitest's reporter for agent sessions hides it: check that the summary shows no skipped tests, or pass `--reporter=default`. When `CI` or `TEST_DATABASE_URL` is set, an unreachable server fails the run instead.
 - Run them before pushing a change to anything under `db/`. `pnpm test:coverage` also passes without a server today, so coverage alone does not prove they ran.
 
+## API types
+
+The types of the core service's HTTP API are generated from `docs/api/openapi.yaml` by openapi-typescript. The code is `packages/shared/src/api/`, imported as `@arlo-tern/shared/api`. **The mobile app may import this subpath**, unlike the configuration, the database code and the connector interface: it holds types only.
+
+- `openapi.generated.ts` is the generator's output, committed. It has three interfaces: `paths` (by path and method), `operations` (by `operationId`) and `components` (schemas, parameters, responses). Each operation has its parameters, its request body and its responses by status code and media type.
+- `index.ts` re-exports those three and adds `Schema<'Task'>`, a schema by name. Hand-written types go here, never in the generated file.
+- `pnpm api:generate` rewrites the file. `pnpm api:check` generates in memory and compares with the committed file byte for byte; it exits 1 when they differ or the file is missing. CI runs it.
+
+Rules:
+
+- **The spec and the generated file change in the same commit.** After an edit to the spec: the Redocly lint, `pnpm api:generate`, then `pnpm typecheck`, which shows what the change broke.
+- **Types only.** The generated file has no runtime code and no imports, and a test fails when it gains either. Do not add `--enum` or `--enum-values` to the command: both emit runtime code. Import with `import type`.
+- **The check sees only what the generator writes.** An edit that changes a constraint alone (`maxLength`, `pattern`, `minimum`, `minProperties`) leaves the file as it is and passes. The types do not express those constraints either, so a value that typechecks is not thereby valid; validation against the spec is `FND-08` and `QA-02`.
+- **The generator is pinned to an exact version** (`openapi-typescript` 7.13.0, no caret), because a new release may write the file differently. Bump it in a commit of its own, together with the regenerated file.
+- **It runs on the workspace's TypeScript.** It declares a peer range of TypeScript `^5.x`; under 6.0.3 it writes the same file as under 5.9.3, and `pnpm-workspace.yaml` accepts the mismatch for 6.0 only (`peerDependencyRules`). It uses the classic compiler API, which TypeScript 7 no longer ships: check the generator before bumping TypeScript.
+- The command passes two options, and both change what the types mean. `--default-non-nullable false` keeps a field that has a `default` optional, since the same type describes what a client sends. `--empty-objects-unknown` keeps `ItineraryItemCreate` and `ItineraryItemUpdate` usable. The 工具與專案結構 table of the design document has the reasoning; do not drop either without reading it.
+- **A `required` list inside a member of an `allOf` reaches only that member's own properties.** A name in it that belongs to another member of the `allOf` is dropped. So `TripDetail.items` and `ItineraryItem.id` are required as the spec says, but the six fields `ItineraryItem` requires from `ItineraryItemFields`, and all four that `ItineraryItemCreate` requires, are optional in the types (the row spec 的寫法造成的型別缺口 of the 工具與專案結構 table in the design document); code that uses those two checks the fields itself. The spec was left as it is, and rewriting it is the owner's decision. In a new schema, write `required` beside `allOf`, where the generator does apply it.
+- What the types cannot say: `uuid`, `date`, `date-time` and `HH:mm` values are all `string`; the `text/event-stream` response is typed as the `data` of one event (`AgentStreamEvent`), not as a stream.
+- There is no API client and no request validation here. `APP-01` chooses the client, `FND-08` the HTTP framework.
+
+The type tests are `packages/shared/src/api/index.test.ts`. They use Vitest's `expectTypeOf`, which does nothing at run time: **`pnpm typecheck` is what runs them**, and a green `pnpm test` says nothing about them. They pin the fields of `Task` and `Problem`, nullable fields, an enumeration, a cursor-paginated list, the error responses and the agent stream's events. When a spec change breaks one on purpose, update the expectation in the same commit.
+
 ## Connector
 
 The connector interface is how the connector service talks to a messaging platform on behalf of users who linked their personal account. The code is `packages/shared/src/connector/`, imported as `@arlo-tern/shared/connector`. It is backend only, like the configuration and the database code, and ESLint enforces that the same way. It lives in the shared package so that the connector service and the tests of any other package can import it; a service must not import another service.
@@ -197,7 +223,7 @@ A TypeScript monorepo on Node.js 24 with this layout (ADR-0019):
 - `apps/mobile`: Expo (React Native) app.
 - `services/connector`: a long-lived process that holds each user's LINE connection through linejs. It only receives messages, filters them by ingestion scope, writes them to the database and enqueues pipeline jobs.
 - `services/core`: the app API, official-account webhooks, the agent, the message pipeline worker, reminders and push sending. One image, started in API or worker mode.
-- `packages/shared`: shared types, the database schema and migrations, API contracts.
+- `packages/shared`: shared types, the database schema and migrations, API contracts (the generated types in `src/api/`).
 
 PostgreSQL is the only stateful component; the job queue is pg-boss on the same database (ADR-0020). The schema, its migrations and the Kysely types are in `packages/shared/src/db/`. The two services exchange data only through PostgreSQL. Core calls the connector through an internal-only control interface for linking and disconnecting.
 
@@ -210,7 +236,7 @@ These are settled in ADRs. Do not "correct" them back to a general preference:
 - **The backend is TypeScript, not Python** (ADR-0019). Both key libraries, linejs and the OpenAI Agents SDK, are JS/TS only.
 - **The beta runs on a single EC2 instance with Docker Compose in AWS Tokyo**, with the single point of failure accepted. ECS Fargate, RDS and Terragrunt environments come at production launch (ADR-0021).
 - **PostgreSQL only.** No Redis, SQS or vector store (ADR-0020, ADR-0015).
-- **TypeScript is pinned to 6.0, not the latest 7.x.** Expo SDK 58's template and typescript-eslint supported only up to 6.0 when the scaffold was made (design §13). Check both before bumping it.
+- **TypeScript is pinned to 6.0, not the latest 7.x.** Expo SDK 58's template and typescript-eslint supported only up to 6.0 when the scaffold was made (design §13). Check both before bumping it, and openapi-typescript as well ("API types").
 - **The agent framework is the OpenAI Agents SDK, the model is Claude.** No OpenAI models and no OpenAI hosted tools. If the adapter validation (`SPK-03`) fails, reopen ADR-0013 rather than switching silently.
 - **Message bodies and LINE credentials are stored with disk encryption only** (ADR-0005). This was chosen against the recommendation and is flagged for re-review before production. Do not add application-level encryption without a new ADR, and do not treat its absence as an oversight.
 
@@ -234,7 +260,7 @@ Every change must keep these true. Each comes from an ADR and is easy to break b
 
 - **Accepted ADRs are not rewritten.** To change a decision, add a new ADR and mark the old one as superseded. Adjusting a default assumption or an initial value does not need a new ADR.
 - **Do not settle open items on your own.** The undecided items in `docs/adr/README.md` and design §14, and the `DEC-*` work items, belong to the project owner. Ask.
-- **Keep the three layers consistent.** A behaviour change usually touches the design document, the OpenAPI spec and the work items together.
+- **Keep the three layers consistent.** A behaviour change usually touches the design document, the OpenAPI spec and the work items together. A change to the spec also changes the generated API types, in the same commit ("API types").
 - **New defaults go in design §13.** If implementing something forces a choice no ADR made, record it there instead of leaving it implicit in code.
 - `docs/plan/work-items.md` uses "工作項目" for units of work because "task" is a product entity. Its dependency column is the source of truth; check that it stays acyclic when you edit it.
 

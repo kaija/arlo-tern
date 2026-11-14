@@ -188,7 +188,7 @@ flowchart LR
 | FND-06 | Job queue | ADR-0020 | FND-04 | 整合 pg-boss：延遲工作、定時工作、重試、失敗佇列；可以在資料庫交易內排入工作。在交易內排入工作用 pg-boss 內建的 `fromKysely(trx)`（FND-04 以 pg-boss 12.38 實測可行）；pg-boss 自己的資料表由這一項建立 | 未開始 |
 | FND-07 | 設定與 secrets | ADR-0021、設計文件第 9.2 節 | FND-01 | 設計文件第 9.2 節的所有門檻與時間常數都由設定提供，程式裡沒有寫死的數值；secrets 從環境載入，不進 repository | 完成 |
 | FND-08 | 核心服務骨架 | ADR-0019、設計文件第 6.1 節 | FND-01、FND-07 | 選定 HTTP 框架；實作 `application/problem+json` 錯誤格式、游標分頁、bearer 驗證的掛點、限流；結構化日誌，且不記錄訊息內文、agent 對話內容、LLM 的輸入輸出；API 與 worker 兩種啟動模式 | 未開始 |
-| FND-09 | 由 OpenAPI spec 產生共用型別 | 設計文件第 6 節 | FND-01 | 從 `docs/api/openapi.yaml` 產生型別，供核心服務與 App 共用；spec 變更後型別不同步時 CI 會失敗。骨架採用 TypeScript 6.0，而 openapi-typescript 7.13 的 peer 範圍是 `^5.x`（2026-11-14 查閱），做這一項時要先確認相容性或改用別的產生工具 | 未開始 |
+| FND-09 | 由 OpenAPI spec 產生共用型別 | 設計文件第 6 節 | FND-01 | 從 `docs/api/openapi.yaml` 產生型別，供核心服務與 App 共用；spec 變更後型別不同步時 CI 會失敗。型別在 `@arlo-tern/shared/api`，以 `pnpm api:generate` 產生、`pnpm api:check` 檢查。TypeScript 版本的問題已確認：openapi-typescript 7.13.0 的 peer 範圍是 `^5.x`，但在 TypeScript 6.0.3 與 5.9.3 下對這份 spec 產生的檔案逐位元組相同（2026-11-14 實測），所以直接用 workspace 的 TypeScript 6.0，沒有另裝一份；它用的是原本的 compiler API，workspace 升到 TypeScript 7 之前要重新確認。比較過的工具與選項見設計文件的「工具與專案結構」表 | 完成 |
 | FND-10 | Claude API client | ADR-0006 | FND-07、EXT-05 | 封裝對 Claude Haiku 5.5 的 structured outputs 呼叫、重試與錯誤分類；記錄每次呼叫的 token 用量但不記錄內容。把設定中的 `ANTHROPIC_API_KEY` 改成必填 | 未開始 |
 
 ## ACC 帳號
@@ -253,7 +253,7 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| TRP-01 | Trip 與行程項目 | ADR-0016 | FND-05、FND-08、ACC-01 | 實作 tag `Trips` 的端點：Trip 的建立、查詢、修改、刪除；行程項目的新增、修改、移動、刪除、當日重排；變更紀錄與還原；時間以 Trip 的時區解讀。`trip_changes.item_id` 沒有外鍵，行程項目刪除後紀錄仍保留它的識別碼 | 未開始 |
+| TRP-01 | Trip 與行程項目 | ADR-0016 | FND-05、FND-08、ACC-01 | 實作 tag `Trips` 的端點：Trip 的建立、查詢、修改、刪除；行程項目的新增、修改、移動、刪除、當日重排；變更紀錄與還原；時間以 Trip 的時區解讀。`trip_changes.item_id` 沒有外鍵，行程項目刪除後紀錄仍保留它的識別碼。產生的型別 `ItineraryItem` 與 `ItineraryItemCreate` 沒有帶到 spec 的必填欄位（設計文件「工具與專案結構」表的「spec 的寫法造成的型別缺口」），必填欄位要在這一項自己驗證 | 未開始 |
 | TRP-02 | Trip 的提醒 | ADR-0016、ADR-0010 | TRP-01、TSK-03、DEC-02 | 依 DEC-02 的決定實作 Trip 與行程項目的提醒 | 未開始 |
 
 ## AGT Agent
@@ -287,7 +287,7 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| APP-01 | Expo 專案骨架 | ADR-0018 | FND-01、FND-09 | Expo development build；導覽結構；使用 FND-09 產生的型別的 API client，含 token 自動換發；token 存在裝置的安全儲存區 | 未開始 |
+| APP-01 | Expo 專案骨架 | ADR-0018 | FND-01、FND-09 | Expo development build；導覽結構；使用 FND-09 產生的型別的 API client，含 token 自動換發；token 存在裝置的安全儲存區。型別從 `@arlo-tern/shared/api` 以 `import type` 取得；FND-09 只確認了檔案沒有任何 import、子路徑從服務解析得到，沒有在 Expo 專案裡試過：App 的 `tsconfig` 要認得 `@arlo-tern/source` 這個 export condition（或先建置共用套件）才找得到型別，在這一項確認。FND-09 沒有加入 client 函式庫，選用哪一個在這一項決定 | 未開始 |
 | APP-02 | 登入與同意畫面 | ADR-0023、ADR-0022 | APP-01、ACC-01、ACC-02、EXT-01 | Google 登入；首次登入顯示文件並取得同意；處理 `not_invited` 與 `consent_required`；文件改版時引導重新同意 | 未開始 |
 | APP-03 | 推播整合 | ADR-0018 | APP-01、SPK-04、ACC-04、EXT-02 | 取得並回報 FCM token；處理權限；點擊推播後導向對應畫面並向後端載入細節；權限關閉時提示用戶 | 未開始 |
 | APP-04 | LINE 連結畫面 | ADR-0001、ADR-0002 | APP-02、CON-05 | 顯示風險告知並取得同意；依連結流程的狀態顯示 QR code 或驗證碼，不假設固定順序；顯示連線狀態；中斷連結 | 未開始 |
@@ -322,7 +322,7 @@ flowchart LR
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
 | QA-01 | 整合測試基礎 | 設計文件第 11 節 | FND-05、FND-06、CON-01 | 測試可以啟動真實的 PostgreSQL 容器、使用假的 connector、重播錄製的模型回應；跑法寫進 `CLAUDE.md`。FND-04 已有為每個測試檔建立空資料庫的做法（`packages/shared/src/db/testing/`），可以沿用 | 未開始 |
-| QA-02 | 契約測試 | 設計文件第 11 節 | FND-08、FND-09 | 每個已實作端點的請求與回應都對照 OpenAPI spec 驗證 | 未開始 |
+| QA-02 | 契約測試 | 設計文件第 11 節 | FND-08、FND-09 | 每個已實作端點的請求與回應都對照 OpenAPI spec 驗證。FND-09 產生的型別只在編譯時有效，不表達 `maxLength`、`pattern`、`minProperties` 這類限制，`pnpm api:check` 也看不到只改限制的變更，所以這一項要對照 spec 本身驗證，不能只靠型別 | 未開始 |
 | QA-03 | 訊息到提醒的端對端測試 | 設計文件第 11 節 | QA-01、PIP-04、PIP-05、TSK-03、TSK-06 | 用假的 connector 注入訊息，驗證：產生 task 與待確認項目、改期與取消、提醒、詐騙警告、管線冪等、保存期清除後來源參照置空 | 未開始 |
 | QA-04 | 安全測試 | 設計文件第 7 節 | ACC-01、TSK-01、TRP-01、SCM-01、AGT-07、PIP-03 | 跨用戶存取一律 404；prompt injection 樣本不會讓管線產生 schema 以外的動作，也不會讓 agent 跨用戶或未經確認執行破壞性操作。官方帳號通道的部分在 QA-05 | 未開始 |
 | QA-05 | [OA] 官方帳號通道的安全測試 | 設計文件第 7 節、ADR-0011、ADR-0024 | OAC-03、OAC-05、OAC-06 | webhook 簽章錯誤被拒絕；未綁定的用戶不會觸發 agent；帳號刪除後官方帳號綁定不殘留；經官方帳號送進來的 prompt injection 樣本不會讓 agent 跨用戶或未經確認執行破壞性操作；沒有任何程式路徑會發出 LINE 的 push message 或 WhatsApp 的 template 訊息 | 未開始 |
