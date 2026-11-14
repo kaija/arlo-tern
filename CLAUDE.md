@@ -68,7 +68,6 @@ Things to know about the toolchain (choices are recorded in design §13):
 - Each service starts from `src/main.ts`. Entry files only wire things together and are excluded from coverage; put logic in modules that have tests.
 - One `Dockerfile` builds either service (`--build-arg SERVICE=connector|core`). An image contains only that service, `packages/shared` and their production dependencies, and runs as the non-root `node` user. A new workspace package that a service depends on must be copied in the `Dockerfile` as well.
 - `docker-compose.yml` is the local stack only. The production stack is a separate file (`OPS-02`). Keep exactly one `connector` and publish no ports for it.
-
 - GitHub Actions are pinned to a full commit SHA with the release in a trailing comment. Nothing updates them automatically; bump the SHA and the comment together by hand. The workflow token is read-only (`permissions: contents: read`); CI does not deploy, publish images or write to the repository (`OPS-03` owns deployment).
 
 There is no integration-test or eval command yet. `QA-01` and `EVL-02` each add theirs to this file. Do not invent commands before then.
