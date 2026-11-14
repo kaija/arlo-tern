@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**The repository holds the design documents, an empty monorepo scaffold (`FND-01`), a local Docker Compose stack (`FND-02`), a CI workflow (`FND-03`), the database schema with its migrations (`FND-04`) and the configuration loader (`FND-07`). No product code exists yet;** apart from the loader and the schema the packages contain placeholders only, and each service runs a placeholder process that validates its configuration and then waits. Nothing reads or writes the tables yet. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
+**The repository holds the design documents, an empty monorepo scaffold (`FND-01`), a local Docker Compose stack (`FND-02`), a CI workflow (`FND-03`), the database schema with its migrations (`FND-04`), the configuration loader (`FND-07`) and the connector interface with its fake implementation (`CON-01`). No product code exists yet;** apart from the loader, the schema and the connector interface the packages contain placeholders only, and each service runs a placeholder process that validates its configuration and then waits. Nothing reads or writes the tables yet, and nothing implements the connector interface for a real platform. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
 
 **The app is the primary surface.** The two official-account channels stay in the MVP but are its lowest-priority work: the beta launches app-only (`LCH-02`) and the channels open later behind a second gate (`LCH-03`). Their work items are marked `[OA]` in `docs/plan/work-items.md`. No item without that mark may depend on one that has it, and no app feature may require an official-account channel.
 
@@ -65,7 +65,7 @@ Things to know about the toolchain (choices are recorded in design §13):
 
 - Typecheck, lint and tests do not need a build. Workspace packages resolve to TypeScript source through the `@arlo-tern/source` export condition; built output resolves to `dist/`. A new workspace package needs the same `exports` shape as `packages/shared/package.json`, a `tsconfig.build.json` listed in the root `tsconfig.build.json`, and a project entry in `vitest.config.ts`.
 - Packages are ESM with `NodeNext` resolution: relative imports carry the `.js` extension.
-- Tests live next to the code as `src/**/*.test.ts` and are excluded from the build. Support code that only tests use goes in a `testing/` directory, which is excluded from the build and from coverage.
+- Tests live next to the code as `src/**/*.test.ts` and are excluded from the build. Support code that only tests use goes in a `testing/` directory, which is excluded from the build and from coverage. Only tests and other `testing/` code may import from a `testing/` directory; ESLint blocks it everywhere else.
 - `pnpm test` includes the database tests, which need a PostgreSQL server; without one they are skipped. Read "Database" before trusting a green run.
 - Prettier skips `docs/` and all Markdown; project documents stay hand-formatted.
 - The pre-commit hook runs ESLint and Prettier on staged code files and blocks the commit on lint errors.
@@ -143,6 +143,53 @@ Database tests:
 - **Without a server the database tests are skipped, and the run is still green.** A warning says so, but Vitest's reporter for agent sessions hides it: check that the summary shows no skipped tests, or pass `--reporter=default`. When `CI` or `TEST_DATABASE_URL` is set, an unreachable server fails the run instead.
 - Run them before pushing a change to anything under `db/`. `pnpm test:coverage` also passes without a server today, so coverage alone does not prove they ran.
 
+## Connector
+
+The connector interface is how the connector service talks to a messaging platform on behalf of users who linked their personal account. The code is `packages/shared/src/connector/`, imported as `@arlo-tern/shared/connector`. It is backend only, like the configuration and the database code, and ESLint enforces that the same way. It lives in the shared package so that the connector service and the tests of any other package can import it; a service must not import another service.
+
+- `connector.ts` has `Connector`: `platform`, `startLink({ userId, linkSessionId })`, `cancelLink(linkSessionId)`, `restore(userId)` and `disconnect(userId)`. The same file has `ConnectorHost`, which the connector process implements and hands to an implementation: the `SessionStore` (`load`, `save`, `delete` of an opaque session state per user) and the callbacks `onLinkState`, `onMessage` and `onConnectionState`. A `ConnectorFactory` turns a host into a connector; the process is written against that type and the implementation is chosen where the process is assembled.
+- `types.ts` has the events and their values, `errors.ts` has `ConnectorError`, whose message is fixed text per code and safe to log.
+- Nothing in the interface names LINE. Another platform is a new implementation and a new value in `PLATFORMS`.
+
+**The interface is read-only, and a test pins it.** `Connector` has no way to send a message, mark one as read, add a friend or change a setting (ADR-0001). `testing/read-only-guard.ts` lists every member `Connector` may have, and explains the rule; read it before changing the interface.
+
+- The list does not compile unless it matches `keyof Connector`, so `pnpm typecheck` fails when one changes without the other.
+- `connector.test.ts` parses `connector.ts` and fails unless `Connector` is one interface that extends nothing and has exactly the listed members, each of the listed kind and type. It also fails when any callable in the module has a name that starts with an account action (`send`, `mark`, `add`, `set`, `update` and the rest of `FORBIDDEN_VERBS`).
+- `assertReadOnlyConnector(connector)` fails when the object an implementation hands out has any public member beyond the list. **The tests of every implementation call it** on what its factory returns. So an implementation keeps its helpers and its platform client in a closure or in `#private` fields; a TypeScript `private` member is still reachable at run time and is reported.
+- The guard cannot judge what a method does. A new member must only start, stop or observe. Anything a contact or the user's other devices could notice needs a new ADR that supersedes ADR-0001.
+
+Rules for code that uses or implements the interface:
+
+- **Do not assume an order of link states.** `awaiting_scan` and `awaiting_verification` may come in either order, repeatedly, or not at all (`SPK-01`). `pending` and `cancelled` are never reported; the caller sets them.
+- **A message may arrive twice, and may not arrive at all after downtime.** Deduplicate on the conversation's and the message's `externalId`. Nothing is promised about replay or about end-to-end-encrypted messages (`SPK-01`).
+- **A message that is not text has a type and nothing else.** Do not add a field for a URL, a file name or a preview.
+- **`content.text`, `qrPayload`, `verificationCode` and the session state never go into a log or an error.**
+- **A user has one connection and one link flow at most.** `startLink` and `restore` reject with `ConnectorError` (`already_connected`, `link_in_progress`, `no_stored_session`) instead of replacing what is there.
+- **`expired` is final.** The implementation has stopped; the stored session stays where it is until the caller deletes it or calls `disconnect`.
+- **`disconnect` works in any state and always deletes the stored session.** A logout that the platform does not confirm is reported as `deviceLoggedOut: false`, not as a failure.
+- The interface has no way to stop a connection without logging out, and no shutdown. The process (`CON-02`) owns shutdown; the lease work of ADR-0025 adds what draining needs.
+
+Testing against the fake:
+
+```ts
+import { createFakeConnector, MemorySessionStore } from '@arlo-tern/shared/connector/testing';
+
+const line = createFakeConnector();
+const connector = line.create(host); // hand `line.create` to the code under test instead
+await connector.startLink({ userId, linkSessionId });
+await line.presentQrCode(linkSessionId);
+await line.completeLink(linkSessionId); // saves a session, reports completed, then connected
+await line.deliverMessage(userId, { content: { type: 'text', text: '…' } });
+await line.invalidateSession(userId); // reports expired
+```
+
+- The code under test receives `line.create`, a `ConnectorFactory`, and so only sees a `Connector`. The controls stay with the test: `presentQrCode`, `presentVerificationCode`, `completeLink`, `failLink`, `expireLink`, `dropConnection`, `recoverConnection`, `invalidateSession`, `refreshSession`, `refuseLogout`, `deliverMessage`, plus `linkStatus` and `connectionState` to look inside.
+- It is deterministic: no network, timers, clock or randomness. Made-up identifiers and times come from a counter. A control resolves after the host's callbacks have settled, so a test asserts straight away and never waits or polls. Await each control: the fake does not queue the events of a user, so two controls started together run their callbacks at once.
+- **Some of that is the fake's convenience, not the contract.** A real implementation does not wait for callbacks before a control returns (it has no controls), may report `connected` some time after `completed`, and may let a callback's failure go unreported. The comment at the top of `testing/fake-connector.ts` lists what is which. Do not treat the fake's behaviour as a fact about LINE.
+- Using a control in a way that makes no sense (moving a flow that is over, delivering a message to a connection that is not `connected`) throws `FakeConnectorUsageError`: a mistake in the test, not a result.
+- `MemorySessionStore` is a `SessionStore` in memory for tests that do not need the database.
+- **The fake has no built form.** `@arlo-tern/shared/connector/testing` resolves only from source, so tests can import it and a built service cannot: the import compiles, then fails when the service starts. ESLint blocks it outside tests and `testing/` directories.
+
 ## Planned architecture
 
 A TypeScript monorepo on Node.js 24 with this layout (ADR-0019):
@@ -171,7 +218,7 @@ These are settled in ADRs. Do not "correct" them back to a general preference:
 
 Every change must keep these true. Each comes from an ADR and is easy to break by accident:
 
-- **The connector interface has no method that sends, marks as read, adds friends or changes settings.** Personal accounts are read-only (ADR-0001).
+- **The connector interface has no method that sends, marks as read, adds friends or changes settings.** Personal accounts are read-only (ADR-0001). A test pins the interface's surface; see "Connector".
 - **A user's LINE connection is held by at most one connector process at a time.** The beta runs exactly one connector instance. Do not run the connector on ECS, or as more than one replica, before the connection lease of ADR-0025 exists; that lease is pre-launch work, not MVP (ADR-0019, ADR-0025).
 - **Official accounts only reply to user-initiated messages.** Never use LINE push messages or WhatsApp template messages. System-initiated notifications go through app push only (ADR-0011, ADR-0024).
 - **Derived data carries no raw message text.** Tasks, proposals, scam alerts, memory entries and notifications store only AI-summarised fields plus a nullable reference to the source message (ADR-0004). Raw text leaves the API only through the `/source` endpoints and agent replies.

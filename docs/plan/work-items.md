@@ -207,12 +207,12 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| CON-01 | Connector 介面與假實作 | ADR-0001、ADR-0019、設計文件第 3.2 節 | FND-01 | 定義平台無關的 connector 介面，**其中沒有任何發訊、已讀、加好友、改設定的方法**；提供可以用程式注入訊息與連線狀態的假實作，供其他項目測試 | 未開始 |
-| CON-02 | 讀取服務骨架 | ADR-0019 | CON-01、FND-05 | 常駐程序；只在內部網路開放的控制介面；連線狀態寫回資料庫；啟動時還原 session 並分批、帶隨機延遲重連；不呼叫 LLM、不發推播、不對外開放 | 未開始 |
+| CON-01 | Connector 介面與假實作 | ADR-0001、ADR-0019、設計文件第 3.2 節 | FND-01 | 定義平台無關的 connector 介面，**其中沒有任何發訊、已讀、加好友、改設定的方法**；提供可以用程式注入訊息與連線狀態的假實作，供其他項目測試 | 完成 |
+| CON-02 | 讀取服務骨架 | ADR-0019 | CON-01、FND-05 | 常駐程序；只在內部網路開放的控制介面；連線狀態寫回資料庫；啟動時還原 session 並分批、帶隨機延遲重連；不呼叫 LLM、不發推播、不對外開放。程序實作 connector 介面的 `ConnectorHost`（三個 callback 與寫入 `line_connections.credentials` 的 `SessionStore`），只依賴 `ConnectorFactory`；介面沒有停止連線或關閉的方法，程序關閉時的收尾在這一項處理 | 未開始 |
 | CON-03 | 訊息入庫與讀取範圍 | ADR-0003、ADR-0007 | CON-02、FND-06 | 建立對話資料列；依讀取範圍過濾（一般帳號與群組預設讀取、其他官方帳號預設不讀、本產品的官方帳號略過）；範圍外的訊息不入庫；範圍內的訊息與視窗工作在同一個交易內寫入；重複的訊息不會重複入庫；非文字訊息只記錄類型 | 未開始 |
-| CON-04 | linejs 實作 | ADR-0001、ADR-0005 | CON-01、SPK-01、FND-05 | 以 linejs 實作 connector 介面：QR 連結、自訂 storage 把 session 存進 PostgreSQL、訊息事件、對話類型判斷、登出連結裝置；只讀新進訊息 | 未開始 |
-| CON-05 | LINE 連結與中斷 | ADR-0001、ADR-0002、ADR-0022 | CON-02、ACC-02 | 實作 tag `LINE Connection` 的端點：連結流程的建立、輪詢、取消；建立前檢查風險告知的同意版本；中斷連結時停止連線、登出裝置、刪除憑證，並依參數刪除已保存的訊息；定時清理過期的連結流程 | 未開始 |
-| CON-06 | 連線失效通知 | ADR-0001 | CON-02、ACC-05 | session 失效時標記狀態，並發 App push 與通知中心通知，請用戶重新連結 | 未開始 |
+| CON-04 | linejs 實作 | ADR-0001、ADR-0005 | CON-01、SPK-01、FND-05 | 以 linejs 實作 connector 介面：QR 連結、自訂 storage 把 session 存進 PostgreSQL、訊息事件、對話類型判斷、登出連結裝置；只讀新進訊息。測試要對 factory 交出的物件呼叫 `assertReadOnlyConnector`，linejs 的 client 與輔助方法不可以是公開成員 | 未開始 |
+| CON-05 | LINE 連結與中斷 | ADR-0001、ADR-0002、ADR-0022 | CON-02、ACC-02 | 實作 tag `LINE Connection` 的端點：連結流程的建立、輪詢、取消；建立前檢查風險告知的同意版本；中斷連結時停止連線、登出裝置、刪除憑證，並依參數刪除已保存的訊息；定時清理過期的連結流程。connector 回報的失敗原因是代碼（`rejected`、`error`），`failureReason` 的文字在這一項產生；`disconnect` 的 `deviceLoggedOut` 為 false 時憑證仍已刪除，要不要告知用戶在這一項決定 | 未開始 |
+| CON-06 | 連線失效通知 | ADR-0001 | CON-02、ACC-05 | session 失效時標記狀態，並發 App push 與通知中心通知，請用戶重新連結。失效後保存的 session 還在，connector 不會自己刪除，這一項決定刪除或保留 | 未開始 |
 | CON-07 | 對話清單與讀取設定 | ADR-0003、ADR-0015 | CON-03、ACC-01 | 實作 tag `Conversations` 的端點；用戶改成不讀取時刪除該對話已保存的訊息；變更後通知讀取服務更新範圍 | 未開始 |
 
 ## EVL Eval

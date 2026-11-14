@@ -9,6 +9,6 @@
     "sourceMap": true
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/testing/**"],
   "references": [{ "path": "../../packages/shared/tsconfig.build.json" }]
 }

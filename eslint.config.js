@@ -23,8 +23,9 @@ export default defineConfig(
     languageOptions: { globals: globals.node },
   },
   {
-    // Service configuration and database access are backend only: the first names the
-    // backend's secrets, the second opens PostgreSQL connections, and neither is written for
+    // Service configuration, database access and the connector interface are backend only:
+    // the first names the backend's secrets, the second opens PostgreSQL connections, the
+    // third is how the connector service reads personal accounts, and none is written for
     // the React Native runtime. The mobile app must not import them.
     files: ['apps/**'],
     rules: {
@@ -40,6 +41,35 @@ export default defineConfig(
               name: '@arlo-tern/shared/db',
               message: 'Database access is backend only; see "Database" in CLAUDE.md.',
             },
+            {
+              name: '@arlo-tern/shared/connector',
+              message: 'The connector interface is backend only; see "Connector" in CLAUDE.md.',
+            },
+            {
+              name: '@arlo-tern/shared/connector/testing',
+              message: 'The connector interface is backend only; see "Connector" in CLAUDE.md.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // `testing/` directories hold support code for tests and are left out of the build.
+    // Code that imports one compiles and then either ships the test support or, for the
+    // fake connector, which has no built form, fails when the built service starts. Only
+    // tests and other `testing/` code may import them.
+    files: ['packages/*/src/**', 'services/*/src/**'],
+    ignores: ['**/*.test.ts', '**/testing/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/testing', '**/testing/**'],
+              message: 'Test support only; see the toolchain notes in CLAUDE.md.',
+            },
           ],
         },
       ],
@@ -47,7 +77,8 @@ export default defineConfig(
   },
   {
     // The app imports the root entry of the shared package, so that entry must not pull
-    // the configuration or the database code in either.
+    // the configuration, the database code or the connector interface in either. This block
+    // replaces the one above for that file; the connector pattern covers its test support too.
     files: ['packages/shared/src/index.ts'],
     rules: {
       'no-restricted-imports': [
@@ -61,6 +92,10 @@ export default defineConfig(
             {
               group: ['./db', './db/*'],
               message: 'Database access is backend only; see "Database" in CLAUDE.md.',
+            },
+            {
+              group: ['./connector', './connector/*', './connector/**'],
+              message: 'The connector interface is backend only; see "Connector" in CLAUDE.md.',
             },
           ],
         },

@@ -18,6 +18,14 @@
       "@arlo-tern/source": "./src/db/index.ts",
       "types": "./dist/db/index.d.ts",
       "default": "./dist/db/index.js"
+    },
+    "./connector": {
+      "@arlo-tern/source": "./src/connector/index.ts",
+      "types": "./dist/connector/index.d.ts",
+      "default": "./dist/connector/index.js"
+    },
+    "./connector/testing": {
+      "@arlo-tern/source": "./src/connector/testing/index.ts"
     }
   },
   "scripts": {

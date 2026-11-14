@@ -969,6 +969,33 @@ ADR-0002 沒有採用自動停損，但建議記錄異常登出事件並設簡�
 | 兩個服務的溝通 | 控制面用內部 HTTP，資料面用 PostgreSQL |
 | `agent_runs` | 追蹤長任務的執行狀態與送達方式 |
 
+### Connector 介面
+
+實作 connector 介面與假實作（工作項目 CON-01）時訂的做法。第 3.2 節的表只列了五個方法與事件；下列是把它寫成程式時補上的部分。linejs 還沒有驗證過（SPK-01），所以介面不依賴任何 linejs 的行為，下列各項在 CON-04 實作時都可以調整。
+
+| 項目 | 本文件的預設 |
+|---|---|
+| 介面的位置 | `packages/shared/src/connector/`，以子路徑 `@arlo-tern/shared/connector` 匯出，只給後端用（與 `@arlo-tern/shared/config` 相同，由 ESLint 擋下 App 與 root entry 的 import）。放在共用套件而不是 `services/connector`，是因為其他套件的測試也要用到它與假實作，而服務之間不互相 import |
+| 介面的組成 | `Connector` 是呼叫端能對平台做的事：`platform`、`startLink`、`cancelLink`、`restore`、`disconnect`。事件不是用註冊的，而是讀取服務的程序在建立實作時交給它一個 `ConnectorHost`：三個 callback（`onLinkState`、`onMessage`、`onConnectionState`）加上 session 的儲存處。這樣不會有事件在註冊前就發生，`Connector` 本身也只剩下指令。程序只認得 `ConnectorFactory`（`host` 進、`Connector` 出），用哪個實作只在組裝程序的地方決定 |
+| 平台無關 | 介面裡沒有 LINE 專屬的名稱或型別。`platform` 目前只有 `line`；加入其他平台時新增一個實作與一個列舉值，呼叫端不用改 |
+| `startLink` 的參數 | 第 3.2 節寫的是 `startLink(userId)`，但 `cancelLink` 要用連結流程的識別碼，而 `line_link_sessions` 是核心服務先建立的。所以 `startLink` 帶 `userId` 與 `linkSessionId`，識別碼由呼叫端給，之後每個連結事件都帶著它 |
+| 連結流程回報的狀態 | `awaiting_scan`（帶 QR 內容）、`awaiting_verification`（帶驗證碼）、`completed`、`failed`、`expired`。`pending` 與 `cancelled` 不由實作回報，是呼叫端自己寫的（建立時、呼叫 `cancelLink` 之後）。`awaiting_scan` 與 `awaiting_verification` 可以以任何順序出現、出現多次、或完全不出現 |
+| 連結失敗的原因 | 實作回報的是代碼：`rejected`（平台或用戶在手機上拒絕）、`error`（其他，包含 session 存不進去）。給用戶看的 `failureReason` 文字由 CON-05 依代碼產生。代碼的集合是暫定的，CON-04 可以再細分 |
+| 連結成功的順序 | 實作先把 session 存好，再回報 `completed`，之後才持有連線。session 存不進去時，流程以 `failed`（`error`）結束，不會出現「已完成但重啟後還原不了」的連線 |
+| session 的保存 | `ConnectorHost` 上的 `SessionStore`：`load`、`save`、`delete`，以用戶為單位存一個不透明的 JSON 物件，對應 `line_connections.credentials`。實作沒有其他的儲存處，也不寫檔案。內容的形式由 CON-04 依 linejs 的 storage 介面決定。這些方法可以失敗；ADR-0025 的「寫入要檢查持有權」之後可以做在 store 裡，介面不用改。已連線時 `save` 失敗要怎麼處理，留給 ADR-0025 的工作 |
+| 還原連線 | 第 3.2 節的表沒有列。`restore(userId)` 由實作自己從 store 讀出 session，session 的內容不經過呼叫端。結果以連線狀態事件回報：`connected`、`reconnecting`，或 session 已被平台作廢時的 `expired`。分批與隨機延遲是呼叫端（CON-02）的事 |
+| 一個用戶一條連線、一個連結流程 | 用戶已有連線時 `startLink` 與 `restore` 會被拒絕（`already_connected`），有進行中的連結流程時也會被拒絕（`link_in_progress`），store 裡沒有 session 時 `restore` 被拒絕（`no_stored_session`）。實作不會自動取代既有的連線；要重新連結一個還連著的用戶，呼叫端先 `disconnect`。已失效（`expired`）的用戶沒有連線，可以直接重新連結 |
+| `disconnect` | 任何狀態都可以呼叫：有連線、只有保存的 session、或什麼都沒有。它停止連線與進行中的連結流程、登出連結裝置、刪除保存的 session（透過 `SessionStore.delete`），完成後實作不再持有該用戶的任何東西，也不再回報事件。**平台沒有確認登出時不算失敗**，因為憑證無論如何都要刪除（ADR-0005）；結果的 `deviceLoggedOut` 說明登出有沒有被確認。只有 session 刪不掉時才會失敗，可以再呼叫一次 |
+| 沒有「停止但不登出」 | 介面沒有只停止連線、保留 session 的方法，也沒有關閉整個 connector 的方法；設計目前用不到。程序關閉時怎麼收尾由 CON-02 負責。ADR-0025 的排空需要釋放單一用戶的連線，到時再加，並同步修改只讀檢查的清單 |
+| 連線狀態 | 實作回報 `connected`、`reconnecting`、`expired`，沒有 `not_linked`（那是沒有連線）。`expired` 是終態：實作已經停止，不再持有連線。失效後保存的 session 仍留在 store 裡，實作不會自己刪；要刪除或保留由呼叫端決定（CON-06），之後呼叫 `disconnect` 也會刪掉 |
+| 訊息事件的內容 | 用戶、對話（平台的識別碼、類型、名稱）、訊息（平台的識別碼、傳送者的識別碼與名稱、方向、傳送時間、內容）。文字訊息的內容是文字；其他類型只有類型，型別上沒有任何可以放網址、檔名或預覽的欄位。對話類型只有 `direct`、`group`、`official_account` 三種，沒有「無法判斷」：分不出來時要回頭修訂 ADR-0003（SPK-01）。接收時間由寫入資料庫的程式記錄，不在事件裡 |
+| 訊息事件不保證的事 | 同一則訊息可能回報多次，由接收端以對話與訊息的識別碼去重。連線中斷期間的訊息會不會補收、端對端加密的訊息哪些讀得到，介面都不保證（SPK-01）。讀不到內容的訊息要怎麼回報還沒有決定，實作不可以自己編造文字 |
+| 事件的順序 | callback 可以回傳 promise。同一個用戶的事件一次只送一個、依序送出，前一個 callback 結束後才送下一個。callback 失敗時實作怎麼處理不在介面的約定內 |
+| 不可以進日誌的欄位 | 訊息的文字、QR 內容、驗證碼、session。`ConnectorError` 的訊息是依代碼固定的文字，不含任何識別碼或內容，可以直接記錄 |
+| 只讀的保證方式 | `packages/shared/src/connector/testing/read-only-guard.ts` 列出 `Connector` 可以有的成員。三道檢查：這份清單與 `keyof Connector` 不一致時型別檢查失敗；測試解析 `connector.ts` 的原始碼，`Connector` 必須是單一、沒有 `extends` 的 interface，成員、種類、回傳型別都與清單相同，而且整個模組裡沒有任何可呼叫的成員以發訊、已讀、加好友、改設定這類動詞開頭；`assertReadOnlyConnector` 檢查實作交出來的物件在執行期沒有清單以外的公開成員，每個實作的測試都要呼叫它（CON-04）。所以新增一個能力要同時改介面與這份清單，審查時看得到。檢查擋不住名稱無害但內容有害的方法，那仍然靠審查 |
+| 假實作 | `@arlo-tern/shared/connector/testing` 的 `createFakeConnector()`。測試扮演平台與用戶的手機：推進連結流程（QR、驗證碼、完成、失敗、逾時）、讓連線中斷與恢復、讓 session 失效、送入訊息、更新 session、讓登出不被確認。被測的程式只拿到 `ConnectorFactory`，看不到這些控制方法。沒有網路、計時器、時鐘與亂數，自動產生的識別碼與時間來自計數器。每個控制方法都等 host 的 callback 結束才完成，測試不需要等待或輪詢。這一點、以及 `completed` 之後緊接著 `connected`，是假實作的方便，不是介面的約定，不可以當成 linejs 的行為。另附一個存在記憶體裡的 `SessionStore` |
+| 假實作不進映像 | 假實作放在 `testing/` 目錄，不建置；它的子路徑只有指向原始碼的 export condition，測試可以 import，建置後的服務載入時會失敗（實測：`tsc -b` 會通過，執行時才出現 `ERR_PACKAGE_PATH_NOT_EXPORTED`）。所以另外加了 ESLint 規則：測試與 `testing/` 目錄以外的程式不可以 import 任何 `testing/` 目錄。兩個服務的建置設定也補上排除 `testing/`，與共用套件一致 |
+
 ## 14. 未決事項與開工前驗證
 
 完整清單在 [ADR 索引](../adr/README.md)。這裡列出會直接影響本文件與 API 的項目。
