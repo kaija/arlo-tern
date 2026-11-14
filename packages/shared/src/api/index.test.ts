@@ -124,27 +124,39 @@ describe('request bodies', () => {
   });
 
   it('accept a populated body for a schema built from allOf', () => {
-    // Generated with `--empty-objects-unknown`. Without it this body is rejected: the second
-    // member of the allOf has no properties and becomes `Record<string, never>`.
-    const body = {
+    const created = {
       date: '2026-12-20',
       startTime: '09:30',
       type: 'attraction',
       title: '淺草寺',
     } satisfies Schema<'ItineraryItemCreate'>;
-    expect(body.type).toBe('attraction');
+    expect(created.type).toBe('attraction');
+    // Generated with `--empty-objects-unknown`. Without it this body is rejected: the second
+    // member of ItineraryItemUpdate's allOf has no properties and becomes
+    // `Record<string, never>`.
+    const updated = { title: '雷門' } satisfies Schema<'ItineraryItemUpdate'>;
+    expect(updated.title).toBe('雷門');
   });
 
-  it('do not carry the required list of an allOf member (known gap)', () => {
-    // The spec requires eight fields of ItineraryItem, but lists them inside a member of the
-    // allOf. The generator applies such a list to that member's own properties (id, tripId)
-    // and not to the six that come from the other member, which are therefore optional here.
-    // See the row "spec 的寫法造成的型別缺口" of the 工具與專案結構 table in the design
-    // document. When the spec or the generator changes that, these lines stop compiling:
-    // replace them with the full list.
-    expectTypeOf<RequiredKeys<Schema<'ItineraryItem'>>>().toEqualTypeOf<'id' | 'tripId'>();
-    expectTypeOf<Schema<'ItineraryItem'>['date']>().toEqualTypeOf<string | undefined>();
-    expectTypeOf<Schema<'ItineraryItemCreate'>['date']>().toEqualTypeOf<string | undefined>();
+  it('carry the required list written beside an allOf', () => {
+    // The generator applies a `required` list to fields that come from another member of the
+    // allOf only when the list is written beside the allOf, not inside one of its members.
+    // The spec used to do the latter for these two schemas, and six fields of ItineraryItem
+    // were optional here. If these lines stop compiling, look at where the spec puts the list.
+    expectTypeOf<RequiredKeys<Schema<'ItineraryItem'>>>().toEqualTypeOf<
+      'id' | 'tripId' | 'date' | 'startTime' | 'endTime' | 'type' | 'title' | 'position'
+    >();
+    expectTypeOf<Schema<'ItineraryItem'>['endTime']>().toEqualTypeOf<string | null>();
+    expectTypeOf<RequiredKeys<Schema<'ItineraryItemCreate'>>>().toEqualTypeOf<
+      'date' | 'startTime' | 'type' | 'title'
+    >();
+    // @ts-expect-error -- `title` is required of a new itinerary item.
+    const incomplete: Schema<'ItineraryItemCreate'> = {
+      date: '2026-12-20',
+      startTime: '09:30',
+      type: 'attraction',
+    };
+    expect(incomplete.title).toBeUndefined();
   });
 });
 

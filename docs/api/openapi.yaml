@@ -3014,10 +3014,10 @@ components:
           description: 當日內的順序，從 0 開始。
     ItineraryItem:
       description: 行程項目。時間以所屬 Trip 的時區解讀。
+      required: [id, tripId, date, startTime, endTime, type, title, position]
       allOf:
         - $ref: '#/components/schemas/ItineraryItemFields'
         - type: object
-          required: [id, tripId, date, startTime, endTime, type, title, position]
           properties:
             id:
               type: string
@@ -3026,10 +3026,9 @@ components:
               type: string
               format: uuid
     ItineraryItemCreate:
+      required: [date, startTime, type, title]
       allOf:
         - $ref: '#/components/schemas/ItineraryItemFields'
-        - type: object
-          required: [date, startTime, type, title]
     ItineraryItemUpdate:
       description: 只送出要變更的欄位。
       allOf:

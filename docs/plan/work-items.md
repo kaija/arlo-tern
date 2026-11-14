@@ -253,7 +253,7 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| TRP-01 | Trip 與行程項目 | ADR-0016 | FND-05、FND-08、ACC-01 | 實作 tag `Trips` 的端點：Trip 的建立、查詢、修改、刪除；行程項目的新增、修改、移動、刪除、當日重排；變更紀錄與還原；時間以 Trip 的時區解讀。`trip_changes.item_id` 沒有外鍵，行程項目刪除後紀錄仍保留它的識別碼。產生的型別 `ItineraryItem` 與 `ItineraryItemCreate` 沒有帶到 spec 的必填欄位（設計文件「工具與專案結構」表的「spec 的寫法造成的型別缺口」），必填欄位要在這一項自己驗證 | 未開始 |
+| TRP-01 | Trip 與行程項目 | ADR-0016 | FND-05、FND-08、ACC-01 | 實作 tag `Trips` 的端點：Trip 的建立、查詢、修改、刪除；行程項目的新增、修改、移動、刪除、當日重排；變更紀錄與還原；時間以 Trip 的時區解讀。`trip_changes.item_id` 沒有外鍵，行程項目刪除後紀錄仍保留它的識別碼 | 未開始 |
 | TRP-02 | Trip 的提醒 | ADR-0016、ADR-0010 | TRP-01、TSK-03、DEC-02 | 依 DEC-02 的決定實作 Trip 與行程項目的提醒 | 未開始 |
 
 ## AGT Agent

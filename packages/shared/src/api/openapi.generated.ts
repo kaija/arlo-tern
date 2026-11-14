@@ -1729,13 +1729,13 @@ export interface components {
             position?: number;
         };
         /** @description 行程項目。時間以所屬 Trip 的時區解讀。 */
-        ItineraryItem: components["schemas"]["ItineraryItemFields"] & {
+        ItineraryItem: WithRequired<components["schemas"]["ItineraryItemFields"], "date" | "startTime" | "endTime" | "type" | "title" | "position"> & {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             tripId: string;
         };
-        ItineraryItemCreate: components["schemas"]["ItineraryItemFields"] & Record<string, unknown>;
+        ItineraryItemCreate: WithRequired<components["schemas"]["ItineraryItemFields"], "date" | "startTime" | "type" | "title">;
         /** @description 只送出要變更的欄位。 */
         ItineraryItemUpdate: components["schemas"]["ItineraryItemFields"] & Record<string, unknown>;
         DayOrderRequest: {
@@ -4131,3 +4131,6 @@ export interface operations {
         };
     };
 }
+type WithRequired<T, K extends keyof T> = T & {
+    [P in K]-?: T[P];
+};
