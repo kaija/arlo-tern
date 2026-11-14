@@ -1,7 +1,8 @@
 # 工作項目清單
 
 - 日期：2026-11-13
-- 範圍：MVP（100 人以下內測）上線前的全部工作
+- 更新：2026-11-14，官方帳號通道列為最低優先，內測分兩階段上線
+- 範圍：MVP（100 人以下內測）的全部工作。內測先以 App 上線（LCH-02），官方帳號通道之後再開放（LCH-03）
 - 依據：[ADR 索引](../adr/README.md)、[系統設計文件](../design/system-design.md)、[OpenAPI spec](../api/openapi.yaml)
 
 本文件把 ADR 與設計文件拆成可以逐項執行的工作項目，並標出相依關係。產品裡的「task」是用戶的待辦事項，為了避免混淆，這裡一律稱為**工作項目**。
@@ -13,6 +14,7 @@
 - **相依** 列出必須先完成的項目。「—」表示沒有相依，可以立刻開始。**這一欄是相依關係的唯一依據**，圖只是概觀。
 - **完成條件** 是判斷該項目做完的標準。
 - **狀態**：`未開始`、`進行中`、`完成`；決策類項目用 `待決定`、`已決定`。
+- 名稱前有 **`[OA]`** 的項目屬於官方帳號通道，優先順序最低，見[優先順序](#優先順序)。
 
 本文件不含時程、工時與負責人。
 
@@ -32,15 +34,25 @@
 | `SCM` | 可疑訊息 | 警告的 API |
 | `TRP` | 旅遊 | Trip 與行程項目 |
 | `AGT` | Agent | 工具、執行器、對話 API、記憶 |
-| `OAC` | 官方帳號通道 | 綁定、LINE 與 WhatsApp 的 webhook 與回覆 |
+| `OAC` | 官方帳號通道 | 綁定、LINE 與 WhatsApp 的 webhook 與回覆。整類都是最低優先 |
 | `APP` | App | Expo App 的各個畫面 |
 | `OPS` | 部署與維運 | 基礎設施、部署、備份、監控 |
 | `QA` | 測試 | 跨項目的測試基礎與安全測試 |
-| `LCH` | 上線 | 設定值定案與內測上線檢查 |
+| `LCH` | 上線 | 設定值定案、內測上線檢查、官方帳號通道開放檢查 |
+
+## 優先順序
+
+主要功能由 App 互動。官方帳號（LINE、WhatsApp）上的 agent 對話是 MVP 內優先順序最低的工作。這是專案擁有者在 2026-11-14 的決定。
+
+- **內測分兩階段上線。** 內測先以 App 上線（LCH-02）。官方帳號通道在那之後另外通過一道檢查才開放（LCH-03）。兩者都在 MVP 內，ADR-0011、ADR-0012、ADR-0024 的決定不變。
+- **官方帳號通道的項目**：OAC-01 到 OAC-07、APP-13、APP-16、QA-05、SPK-05、EXT-03、EXT-04、EXT-11、DEC-05、LCH-03。名稱前都標了 `[OA]`。
+- **App 主線不相依於官方帳號通道。** 上面這些項目以外的工作項目，都不相依於其中任何一項，所以這一批可以整批延後而不影響內測上線。新增或修改項目時要維持這一點。
+- **優先順序寫在這一節，不寫進相依欄。** 相依欄只記錄技術上必須先完成的項目。官方帳號通道的項目沒有為了排序而加上對 App 項目的相依。
+- **EXT-04 的等待時間不由我方控制。** Meta 的商業帳號驗證與號碼審核如果排到最後才送件，LCH-03 的時程會由它決定。要不要提早送件由專案擁有者決定。
 
 ## 相依概觀
 
-這張圖只到類別層級，用來看大方向。實際的相依以各表的「相依」欄為準。
+這張圖只到類別層級，用來看大方向。實際的相依以各表的「相依」欄為準。「官方帳號通道」這個節點代表上一節列出的所有 `[OA]` 項目，不只 `OAC` 類別。
 
 ```mermaid
 flowchart LR
@@ -56,11 +68,12 @@ flowchart LR
   SCM[SCM 可疑訊息]
   TRP[TRP 旅遊]
   AGT[AGT Agent]
-  OAC[OAC 官方帳號通道]
   APP[APP App]
   OPS[OPS 部署與維運]
   QA[QA 測試]
-  LCH[LCH 上線]
+  LCH[LCH-02 內測上線]
+  OAT[官方帳號通道<br/>最低優先]
+  LCH3[LCH-03 官方帳號通道開放]
 
   FND --> ACC
   FND --> CON
@@ -76,30 +89,33 @@ flowchart LR
   TSK --> AGT
   TRP --> AGT
   CON --> AGT
-  AGT --> OAC
-  ACC --> OAC
   SPK -. 只擋 linejs 實作 .-> CON
   SPK -. 只擋 agent 執行器 .-> AGT
-  SPK -. 推播與預填連結 .-> APP
+  SPK -. 推播 .-> APP
   EXT -. 金鑰與帳號 .-> ACC
-  EXT -. 金鑰與帳號 .-> OAC
-  DEC -. 只擋需要該數值的項目 .-> OAC
   ACC --> APP
   CON --> APP
   TSK --> APP
   SCM --> APP
   TRP --> APP
   AGT --> APP
-  OAC --> APP
   FND --> OPS
   PIP --> QA
   AGT --> QA
-  OAC --> QA
   APP --> LCH
   OPS --> LCH
   QA --> LCH
   EXT --> LCH
-  DEC --> LCH
+  DEC -. 只擋需要該數值的項目 .-> LCH
+
+  ACC --> OAT
+  AGT --> OAT
+  APP --> OAT
+  SPK -. 預填連結 .-> OAT
+  EXT -. 帳號、審核與 DPA .-> OAT
+  DEC -. WhatsApp 預算 .-> OAT
+  OAT --> LCH3
+  LCH --> LCH3
 ```
 
 ### 拆相依的三條原則
@@ -112,9 +128,9 @@ flowchart LR
 
 ### 可以立刻開始的項目
 
-沒有任何相依的項目：SPK-01、SPK-03、SPK-04、SPK-05、SPK-06、EXT-01 到 EXT-10、DEC-01 到 DEC-04、DEC-07 到 DEC-09、FND-01、EVL-01、OPS-01。
+沒有任何相依的項目：SPK-01、SPK-03、SPK-04、SPK-05、SPK-06、EXT-01 到 EXT-11、DEC-01 到 DEC-04、DEC-07 到 DEC-09、FND-01、EVL-01、OPS-01。
 
-技術驗證與外部作業建議最先啟動：前者可能推翻 ADR，後者有不受控的等待時間。
+技術驗證與外部作業建議最先啟動：前者可能推翻 ADR，後者有不受控的等待時間。其中 SPK-05、EXT-03、EXT-04、EXT-11 屬於官方帳號通道，不在建議最先啟動之列，見[優先順序](#優先順序)。
 
 ## SPK 技術驗證
 
@@ -124,7 +140,7 @@ flowchart LR
 | SPK-02 | linejs 多連線穩定性 | ADR-0001、ADR-0019 | SPK-01 | 在單一 Node 程序內同時維持多個連線，記錄每個連線的記憶體用量、重連行為、分批重連的可行間隔；據此估計 100 個連線的資源需求 | 未開始 |
 | SPK-03 | OpenAI Agents SDK adapter 搭配 Claude Opus 5.5 | ADR-0013 | — | 逐項確認 ADR-0013 列的 8 個驗證項目：工具呼叫與平行工具呼叫、串流、自訂 session 儲存、thinking 區塊原樣回傳、不送出強制的 `tool_choice`、prompt caching 控制、tracing 完全關閉、對話摘要的可行做法。第 1 到 5 項有任何一項無法解決就重開 ADR-0013 | 未開始 |
 | SPK-04 | Expo 取得 iOS 的 FCM registration token | ADR-0018 | — | 在 development build 上，iOS 與 Android 都能取得 FCM registration token 並收到後端經 FCM 發出的推播；記錄選用的套件與設定 | 未開始 |
-| SPK-05 | 官方帳號預填訊息連結 | ADR-0012、ADR-0024 | — | 確認 LINE 開啟官方帳號並預填訊息的 URL scheme，以及 `wa.me` 預填訊息連結，在 iOS 與 Android 上的行為；不可行時記錄改用手動輸入綁定碼 | 未開始 |
+| SPK-05 | [OA] 官方帳號預填訊息連結 | ADR-0012、ADR-0024 | — | 確認 LINE 開啟官方帳號並預填訊息的 URL scheme，以及 `wa.me` 預填訊息連結，在 iOS 與 Android 上的行為；不可行時記錄改用手動輸入綁定碼 | 未開始 |
 | SPK-06 | 中文關鍵字索引選型 | ADR-0015 | — | 用繁體中文的測試資料比較 `pg_bigm` 與 `pg_trgm` 對兩字詞查詢的結果與效能，並確認在 Docker 的 PostgreSQL 與 RDS 上都可用；選定其中一個 | 未開始 |
 
 ## EXT 外部作業
@@ -133,14 +149,15 @@ flowchart LR
 |---|---|---|---|---|---|
 | EXT-01 | Google Cloud 專案、OAuth client 與 Maps 金鑰 | ADR-0017、ADR-0023 | — | 建立專案；取得 iOS、Android 與後端驗證用的 OAuth client ID；啟用 Places API 與 Routes API，金鑰限制來源並設定每日配額上限 | 未開始 |
 | EXT-02 | Firebase 專案與 APNs 金鑰 | ADR-0018 | — | 建立 Firebase 專案；上傳 APNs 金鑰；取得後端呼叫 FCM HTTP v1 用的服務帳號 | 未開始 |
-| EXT-03 | LINE 官方帳號與 Messaging API channel | ADR-0011 | — | 建立官方帳號與 Messaging API channel；取得 channel secret 與 access token；可以設定 webhook 網址 | 未開始 |
-| EXT-04 | Meta 商業帳號、WhatsApp 號碼與費率 | ADR-0024 | — | 完成 Meta 商業帳號驗證、專用電話號碼與顯示名稱審核；取得 Cloud API 的 token 與 app secret；查到台灣區（Rest of Asia Pacific）service message 的實際費率 | 未開始 |
+| EXT-03 | [OA] LINE 官方帳號與 Messaging API channel | ADR-0011 | — | 建立官方帳號與 Messaging API channel；取得 channel secret 與 access token；可以設定 webhook 網址 | 未開始 |
+| EXT-04 | [OA] Meta 商業帳號、WhatsApp 號碼與費率 | ADR-0024 | — | 完成 Meta 商業帳號驗證、專用電話號碼與顯示名稱審核；取得 Cloud API 的 token 與 app secret；查到台灣區（Rest of Asia Pacific）service message 的實際費率 | 未開始 |
 | EXT-05 | Anthropic API 帳號與金鑰 | ADR-0006 | — | 取得 Claude API 金鑰，可以呼叫 Claude Haiku 5.5 與 Claude Opus 5.5 | 未開始 |
 | EXT-06 | 同意文件 | ADR-0002、ADR-0022 | — | 完成三份文件的第一版並有可公開存取的網址：服務條款與隱私政策、LINE 非官方連線風險告知、LLM 處理與跨境傳輸。隱私政策載明 ADR-0022 列出的處理者、儲存地、保存期限與備份保存天數 | 未開始 |
 | EXT-07 | DPIA 與合法利益評估 | ADR-0022 | — | 完成書面的 DPIA，涵蓋 ADR-0022 列出的五個高風險項目；評估要求額外緩解時，以新的 ADR 記錄 | 未開始 |
 | EXT-08 | Apple 與 Google 的發佈帳號與登入規範 | ADR-0018、ADR-0023 | — | 取得 Apple Developer 與 Google Play 的發佈帳號；確認 App Store 審查規範對只提供 Google 登入的 App 的現行要求，以及 TestFlight 外部測試的審查要求 | 未開始 |
 | EXT-09 | Google Maps Platform 的內容保存條款 | ADR-0017 | — | 對照現行條款，確認除了地點 ID 之外，名稱、地址、座標、營業時間可以保存多久；結論寫成紀錄 | 未開始 |
-| EXT-10 | 各處理者的資料處理協議（DPA） | ADR-0022 | — | 確認與 Anthropic、AWS、Google、Meta 的資料處理協議，並記錄 Anthropic 的資料保留期限。這一項只擋內測上線，不擋開發 | 未開始 |
+| EXT-10 | 各處理者的資料處理協議（DPA） | ADR-0022 | — | 確認與 Anthropic、AWS、Google 的資料處理協議，並記錄 Anthropic 的資料保留期限。這一項只擋內測上線，不擋開發。Meta 的部分在 EXT-11 | 未開始 |
+| EXT-11 | [OA] Meta 的資料處理協議 | ADR-0022、ADR-0024 | — | 確認與 Meta 的資料處理協議。這一項只擋官方帳號通道開放，不擋內測上線 | 未開始 |
 
 ## DEC 待決定
 
@@ -152,7 +169,7 @@ flowchart LR
 | DEC-02 | 旅遊行程項目的提醒規則 | ADR-0016 | — | 決定是否只提醒 Trip 的開始，或加入逐項提醒，更新 ADR-0016 的待決事項 | 待決定 |
 | DEC-03 | 取消 task 的信心門檻 | ADR-0008 | — | 決定「取消」是否使用比新增與修改更高的門檻 | 待決定 |
 | DEC-04 | 記憶條目的數量上限 | ADR-0014 | — | 決定上限的數值 | 待決定 |
-| DEC-05 | WhatsApp 的預算與上限 | ADR-0024 | EXT-04 | 依實際費率決定：每月全域預算（以則數或金額表示）、每位用戶的每日回覆上限、長結果的長度門檻 | 待決定 |
+| DEC-05 | [OA] WhatsApp 的預算與上限 | ADR-0024 | EXT-04 | 依實際費率決定：每月全域預算（以則數或金額表示）、每位用戶的每日回覆上限、長結果的長度門檻 | 待決定 |
 | DEC-06 | 詐騙通知的信心分級 | ADR-0009 | PIP-02 | 依管線 prompt 在 eval 上的結果決定高、中、低的切點 | 待決定 |
 | DEC-07 | 帳號刪除完成的通知管道 | ADR-0022、設計文件第 14 節 | — | 決定用什麼管道通知；若用 email，確認新增的寄信服務並更新 ADR-0022 的處理者清單 | 待決定 |
 | DEC-08 | 確認設計文件第 13 節的新預設 | 設計文件第 13 節 | — | 逐項確認或修改第 13 節列出的預設；修改的部分同步更新設計文件與 OpenAPI spec | 待決定 |
@@ -249,19 +266,22 @@ flowchart LR
 | AGT-04 | 歷史訊息檢索 | ADR-0015 | SPK-06、CON-03 | 建立 SPK-06 選定的索引；檢索工具邏輯：關鍵字、對話或聯絡人、時間範圍、筆數上限，結果附前後文；對話清單工具；範圍由伺服器限定；結果有長度上限 | 未開始 |
 | AGT-05 | 地圖工具 | ADR-0017 | EXT-01、EXT-09、FND-07 | 地點搜尋、地點詳情、路線時間三個工具邏輯；金鑰只在後端；只要求需要的欄位；每個用戶的呼叫次數限流；同一輪對話內重複查詢使用暫存；保存的地點欄位符合 EXT-09 的結論 | 未開始 |
 | AGT-06 | Agent 執行器 | ADR-0013、ADR-0014 | SPK-03、EXT-05、AGT-01、AGT-02、AGT-03、AGT-04、AGT-05 | 以 OpenAI Agents SDK 經 adapter 執行 Claude Opus 5.5；system prompt；每次執行載入記憶與近期對話；session 存 PostgreSQL；把各工具邏輯包成 function tool，用戶範圍由執行環境注入；破壞性操作要求確認；**tracing 關閉，沒有資料送往 OpenAI** | 未開始 |
-| AGT-07 | Agent 對話 API | ADR-0013 | AGT-06、FND-08 | 實作 tag `Agent` 中的對話端點：建立、列出、刪除、訊息列表、SSE 串流；用戶端斷線後繼續執行並保存結果；同一個對話同時只有一個進行中的回覆；官方帳號通道的對話可以在 App 內接續 | 未開始 |
+| AGT-07 | Agent 對話 API | ADR-0013 | AGT-06、FND-08 | 實作 tag `Agent` 中的對話端點：建立、列出、刪除、訊息列表、SSE 串流；用戶端斷線後繼續執行並保存結果；同一個對話同時只有一個進行中的回覆。官方帳號通道的對話在 App 內接續由 OAC-07 負責 | 未開始 |
 | AGT-08 | 對話摘要與對話紀錄保存期 | ADR-0014 | AGT-06、DEC-01 | 對話過長時依 SPK-03 確認的做法摘要較舊的輪次；依 DEC-01 的決定清除過期的對話紀錄 | 未開始 |
 
 ## OAC 官方帳號通道
 
+這一類全部是最低優先，在內測以 App 上線之後才需要完成，見[優先順序](#優先順序)。
+
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| OAC-01 | 綁定碼與綁定 | ADR-0012、ADR-0024 | ACC-05、SPK-05 | 實作 tag `OA Bindings` 的端點：產生一次性綁定碼（只存雜湊、10 分鐘、一次性）與預填訊息連結、列出與解除綁定；綁定成功時寫入通知中心；驗證失敗限流；定時清理過期的綁定碼 | 未開始 |
-| OAC-02 | LINE webhook | ADR-0011、ADR-0012 | OAC-01、EXT-03、FND-08 | 實作 tag `Webhooks` 中的 LINE 端點：驗證 `X-Line-Signature`、立即回 200、以事件識別碼去重、處理綁定碼、未綁定的用戶回固定訊息且不觸發 agent | 未開始 |
-| OAC-03 | LINE 官方帳號的回覆流程 | ADR-0011 | OAC-02、AGT-06、ACC-05 | 顯示 loading animation；期限內用 reply 回覆；逾時先用 reply 回「處理中」，結果寫進 App 對話並發 App push；**永不使用 LINE 的 push message** | 未開始 |
-| OAC-04 | WhatsApp webhook | ADR-0024 | OAC-01、EXT-04、FND-08 | 實作 tag `Webhooks` 中的 WhatsApp 端點：GET 驗證握手、驗證 `X-Hub-Signature-256`、立即回 200、去重、以 business-scoped user ID 處理綁定、不保存電話號碼、未綁定的用戶每個視窗只回一次 | 未開始 |
-| OAC-05 | WhatsApp 官方帳號的回覆流程 | ADR-0024 | OAC-04、AGT-06 | typing indicator；短答案直接回；長結果把完整內容寫進 App 並只回一則摘要加 App 連結；只在 customer service window 內發送，不發 template 訊息；每則送出的訊息都寫入紀錄 | 未開始 |
-| OAC-06 | WhatsApp 預算控管 | ADR-0024 | OAC-05、DEC-05 | 每月全域預算與每位用戶的每日上限；達到上限時每個視窗只回一次固定訊息，之後不回應；保留一部分預算給固定訊息；用量達門檻時告警 | 未開始 |
+| OAC-01 | [OA] 綁定碼與綁定 | ADR-0012、ADR-0024 | ACC-05、SPK-05 | 實作 tag `OA Bindings` 的端點：產生一次性綁定碼（只存雜湊、10 分鐘、一次性）與預填訊息連結、列出與解除綁定；綁定成功時寫入通知中心；驗證失敗限流；定時清理過期的綁定碼 | 未開始 |
+| OAC-02 | [OA] LINE webhook | ADR-0011、ADR-0012 | OAC-01、EXT-03、FND-08 | 實作 tag `Webhooks` 中的 LINE 端點：驗證 `X-Line-Signature`、立即回 200、以事件識別碼去重、處理綁定碼、未綁定的用戶回固定訊息且不觸發 agent | 未開始 |
+| OAC-03 | [OA] LINE 官方帳號的回覆流程 | ADR-0011 | OAC-02、AGT-06、ACC-05 | 顯示 loading animation；期限內用 reply 回覆；逾時先用 reply 回「處理中」，結果寫進 App 對話並發 App push；**永不使用 LINE 的 push message**；提供這個通道的執行次數與逾時比例指標 | 未開始 |
+| OAC-04 | [OA] WhatsApp webhook | ADR-0024 | OAC-01、EXT-04、FND-08 | 實作 tag `Webhooks` 中的 WhatsApp 端點：GET 驗證握手、驗證 `X-Hub-Signature-256`、立即回 200、去重、以 business-scoped user ID 處理綁定、不保存電話號碼、未綁定的用戶每個視窗只回一次 | 未開始 |
+| OAC-05 | [OA] WhatsApp 官方帳號的回覆流程 | ADR-0024 | OAC-04、AGT-06 | typing indicator；短答案直接回；長結果把完整內容寫進 App 並只回一則摘要加 App 連結；只在 customer service window 內發送，不發 template 訊息；每則送出的訊息都寫入紀錄 | 未開始 |
+| OAC-06 | [OA] WhatsApp 預算控管 | ADR-0024 | OAC-05、DEC-05 | 每月全域預算與每位用戶的每日上限；達到上限時每個視窗只回一次固定訊息，之後不回應；保留一部分預算給固定訊息；提供送出則數與預算使用率的指標，用量達門檻時告警；DEC-05 決定的數值回填到設計文件第 9.2 節 | 未開始 |
+| OAC-07 | [OA] 在 App 接續官方帳號通道的對話 | ADR-0011、ADR-0014、ADR-0024 | AGT-07、OAC-03、OAC-05 | 官方帳號通道的對話出現在 App 的 agent 對話列表；從 App 接續時這一輪只在 App 內進行，回覆不送到 LINE 或 WhatsApp；用戶回到官方帳號時 agent 看得到 App 內的這幾輪；同一個對話不論從哪個通道發起，同時只有一個進行中的回覆 | 未開始 |
 
 ## APP App
 
@@ -277,11 +297,12 @@ flowchart LR
 | APP-08 | 待確認清單畫面 | ADR-0008 | APP-02、TSK-02 | 列出待確認項目，區分新增、修改、取消；修改與取消顯示前後對照；接受（可先調整）與拒絕 | 未開始 |
 | APP-09 | 可疑訊息警告畫面 | ADR-0009 | APP-02、SCM-01 | 列出警告並標示等級；查看理由與來源訊息；回報「這不是詐騙」；標記為已處理 | 未開始 |
 | APP-10 | Trip 與行程畫面 | ADR-0016、ADR-0017 | APP-02、TRP-01 | 建立與編輯 Trip；逐日行程；新增、修改、拖移、刪除行程項目；時間衝突提示；以地點 ID 或座標開啟地圖導航；變更紀錄與還原 | 未開始 |
-| APP-11 | Agent 對話畫面 | ADR-0013、ADR-0014 | APP-02、AGT-07 | SSE 串流顯示回覆與工具進度；多個對話；顯示官方帳號通道的對話並可接續；斷線後重新載入回覆 | 未開始 |
+| APP-11 | Agent 對話畫面 | ADR-0013、ADR-0014 | APP-02、AGT-07 | SSE 串流顯示回覆與工具進度；多個對話；斷線後重新載入回覆。顯示與接續官方帳號通道的對話由 APP-16 負責 | 未開始 |
 | APP-12 | 記憶管理畫面 | ADR-0014 | APP-02、AGT-03 | 查看、修改、刪除每一條記憶 | 未開始 |
-| APP-13 | 官方帳號綁定畫面 | ADR-0012、ADR-0024 | APP-02、OAC-01 | LINE 與 WhatsApp 各自的綁定狀態；產生綁定碼並開啟預填訊息連結；解除綁定 | 未開始 |
+| APP-13 | [OA] 官方帳號綁定畫面 | ADR-0012、ADR-0024 | APP-02、OAC-01 | LINE 與 WhatsApp 各自的綁定狀態；產生綁定碼並開啟預填訊息連結；解除綁定 | 未開始 |
 | APP-14 | 通知中心與設定畫面 | ADR-0004、ADR-0010、ADR-0018、ADR-0022 | APP-02、ACC-03、ACC-05、ACC-06 | 通知中心；設定保存期、勿擾時段、各類通知開關；登出；刪除帳號（再次確認） | 未開始 |
 | APP-15 | 內測發佈 | ADR-0018 | APP-03、EXT-08 | 以 EAS Build 產生版本；透過 TestFlight 與 Google Play internal testing 發給內測用戶 | 未開始 |
+| APP-16 | [OA] 在 Agent 對話畫面顯示官方帳號通道的對話 | ADR-0011、ADR-0014、ADR-0024 | APP-11、OAC-07 | 對話列表標示來自 LINE 或 WhatsApp 的對話；可以查看完整內容並接著問；從官方帳號回覆裡的連結開啟 App 時，導向對應的對話或 Trip | 未開始 |
 
 ## OPS 部署與維運
 
@@ -291,7 +312,7 @@ flowchart LR
 | OPS-02 | 線上 Docker Compose | ADR-0021 | OPS-01、FND-02 | 反向代理負責 TLS；`core-api`、`core-worker`、`connector`、PostgreSQL；讀取服務與資料庫不對外開放；secrets 以環境檔或 secret 服務注入 | 未開始 |
 | OPS-03 | 部署流程 | ADR-0019、ADR-0021 | OPS-02、FND-03 | GitHub Actions 建置並推送映像；兩個服務可以分開部署，部署核心服務不重啟讀取服務；部署步驟寫進 README | 未開始 |
 | OPS-04 | 備份與還原 | ADR-0021 | OPS-02 | PostgreSQL 每日備份到 S3，加密、限制存取、設定保存天數；完成一次還原演練並記錄；保存天數回填到隱私政策 | 未開始 |
-| OPS-05 | 指標與告警 | ADR-0002、設計文件第 10.1 節 | OPS-02、CON-02、PIP-03 | 設計文件第 10.1 節列出的指標；告警：異常登出數突增、管線佇列持續堆積、備份失敗。WhatsApp 預算使用率的告警由 OAC-06 負責 | 未開始 |
+| OPS-05 | 指標與告警 | ADR-0002、設計文件第 10.1 節 | OPS-02、CON-02、PIP-03 | 設計文件第 10.1 節列出的指標；告警：異常登出數突增、管線佇列持續堆積、備份失敗。官方帳號通道的指標不在這一項：LINE 逾時比例由 OAC-03 負責，WhatsApp 的送出則數、預算使用率與告警由 OAC-06 負責 | 未開始 |
 | OPS-06 | 資料庫存取控管 | ADR-0005 | OPS-02、DEC-09 | 資料庫只接受內部網路連線；備份的存取權限受限；依 DEC-09 的決定設定資料庫角色 | 未開始 |
 
 ## QA 測試
@@ -303,14 +324,16 @@ flowchart LR
 | QA-01 | 整合測試基礎 | 設計文件第 11 節 | FND-05、FND-06、CON-01 | 測試可以啟動真實的 PostgreSQL 容器、使用假的 connector、重播錄製的模型回應；跑法寫進 `CLAUDE.md` | 未開始 |
 | QA-02 | 契約測試 | 設計文件第 11 節 | FND-08、FND-09 | 每個已實作端點的請求與回應都對照 OpenAPI spec 驗證 | 未開始 |
 | QA-03 | 訊息到提醒的端對端測試 | 設計文件第 11 節 | QA-01、PIP-04、PIP-05、TSK-03、TSK-06 | 用假的 connector 注入訊息，驗證：產生 task 與待確認項目、改期與取消、提醒、詐騙警告、管線冪等、保存期清除後來源參照置空 | 未開始 |
-| QA-04 | 安全測試 | 設計文件第 7 節 | ACC-01、TSK-01、TRP-01、SCM-01、AGT-07、OAC-02、OAC-04、PIP-03 | 跨用戶存取一律 404；webhook 簽章錯誤被拒絕；prompt injection 樣本不會讓管線產生 schema 以外的動作，也不會讓 agent 跨用戶或未經確認執行破壞性操作 | 未開始 |
+| QA-04 | 安全測試 | 設計文件第 7 節 | ACC-01、TSK-01、TRP-01、SCM-01、AGT-07、PIP-03 | 跨用戶存取一律 404；prompt injection 樣本不會讓管線產生 schema 以外的動作，也不會讓 agent 跨用戶或未經確認執行破壞性操作。官方帳號通道的部分在 QA-05 | 未開始 |
+| QA-05 | [OA] 官方帳號通道的安全測試 | 設計文件第 7 節、ADR-0011、ADR-0024 | OAC-03、OAC-05、OAC-06 | webhook 簽章錯誤被拒絕；未綁定的用戶不會觸發 agent；帳號刪除後官方帳號綁定不殘留；經官方帳號送進來的 prompt injection 樣本不會讓 agent 跨用戶或未經確認執行破壞性操作；沒有任何程式路徑會發出 LINE 的 push message 或 WhatsApp 的 template 訊息 | 未開始 |
 
 ## LCH 上線
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| LCH-01 | 設定值定案 | 設計文件第 9.2 節 | DEC-03、DEC-04、DEC-05、DEC-06、PIP-05 | 設計文件第 9.2 節中標為未定的設定都有正式的值，並回填到設計文件 | 未開始 |
-| LCH-02 | 內測上線檢查 | ADR-0022、設計文件第 14 節 | LCH-01、DEC-08、DEC-10、EXT-06、EXT-07、EXT-10、SPK-02、CON-04、CON-06、CON-07、ACC-07、TRP-02、AGT-08、OAC-03、OAC-06、APP-04、APP-05、APP-07、APP-08、APP-09、APP-10、APP-11、APP-12、APP-13、APP-14、APP-15、OPS-03、OPS-04、OPS-05、OPS-06、QA-02、QA-03、QA-04 | DPIA 與各處理者的 DPA 完成；同意文件已上線；邀請名單建立；所有技術驗證有結論；全部 MVP 工作項目完成；用真實 LINE 帳號走完連結、訊息到 task、提醒、警告、三個通道的 agent 對話 | 未開始 |
+| LCH-01 | 設定值定案 | 設計文件第 9.2 節 | DEC-03、DEC-04、DEC-06、PIP-05 | 設計文件第 9.2 節中標為未定的設定都有正式的值，並回填到設計文件。WhatsApp 的預算、每日上限與長結果門檻除外，由 OAC-06 回填、LCH-03 檢查 | 未開始 |
+| LCH-02 | 內測上線檢查 | ADR-0022、設計文件第 14 節 | LCH-01、DEC-08、DEC-10、EXT-06、EXT-07、EXT-10、SPK-02、CON-04、CON-06、CON-07、ACC-07、TRP-02、AGT-08、APP-04、APP-05、APP-07、APP-08、APP-09、APP-10、APP-11、APP-12、APP-14、APP-15、OPS-03、OPS-04、OPS-05、OPS-06、QA-02、QA-03、QA-04 | 內測以 App 上線，不含官方帳號通道。DPIA 與 EXT-10 的 DPA 完成；同意文件已上線；邀請名單建立；官方帳號通道以外的技術驗證都有結論；官方帳號通道以外的 MVP 工作項目全部完成；用真實 LINE 帳號走完連結、訊息到 task、提醒、警告、App 內的 agent 對話 | 未開始 |
+| LCH-03 | [OA] 官方帳號通道開放檢查 | ADR-0011、ADR-0012、ADR-0024 | LCH-02、OAC-06、OAC-07、APP-13、APP-16、QA-05、EXT-11 | 內測上線後，對內測用戶開放官方帳號通道。含 APP-13 與 APP-16 的 App 版本已發給內測用戶；WhatsApp 的預算、每日上限與長結果門檻有正式的值；隱私政策已載明 LINE 與 Meta 會處理官方帳號上的對話，若是內測上線後才補上，依同意文件改版的流程處理；用真實帳號走完 LINE 與 WhatsApp 的綁定、短答案、LINE 逾時改用 App push、WhatsApp 長結果導回 App、達到上限時的固定訊息 | 未開始 |
 
 ## 不在 MVP 範圍、正式上線前要做的事
 
@@ -335,3 +358,4 @@ flowchart LR
 - 新增項目時使用該類別的下一個編號，不重新編號既有項目。
 - 技術驗證或決策的結果改變了設計時，先更新 ADR 或設計文件，再調整受影響的工作項目。
 - 相依關係變更後，確認沒有形成循環，而且每個相依的 ID 都存在。
+- 沒有標 `[OA]` 的項目不可以相依於標了 `[OA]` 的項目。新增官方帳號通道的項目時，名稱前加上 `[OA]`，並加進[優先順序](#優先順序)的清單。
