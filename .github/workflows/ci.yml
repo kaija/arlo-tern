@@ -1,0 +1,95 @@
+# CI for work item FND-03. The `check` job runs the commands documented in CLAUDE.md;
+# when one of those commands changes, change it here and there together.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Read-only token: nothing here publishes, deploys or writes back to the repository.
+permissions:
+  contents: read
+
+# A newer commit on the same branch or pull request replaces the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Actions are pinned to a commit SHA; the comment names the release. Bump both by hand.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          # The pnpm store is cached below, once Corepack has put pnpm on the PATH.
+          package-manager-cache: false
+
+      # Corepack supplies the pnpm version pinned by `packageManager` in package.json.
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Find the pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test with coverage
+        run: pnpm test:coverage
+
+      - name: Build
+        run: pnpm build
+
+      - name: Lint the OpenAPI spec
+        run: npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
+
+  # Not part of the FND-03 criterion. The Dockerfile copies workspace packages by name,
+  # so it breaks when a service gains a workspace dependency; nothing else would catch that.
+  images:
+    name: Build image (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [connector, core]
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Built and discarded: publishing images belongs to OPS-03.
+      - name: Build the image
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: docker build --build-arg "SERVICE=$SERVICE" --tag "arlo-tern-$SERVICE:ci" .

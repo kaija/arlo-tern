@@ -1,0 +1,3 @@
+# Warnings fail the lint as errors do: the spec must stay free of both (CLAUDE.md).
+extends:
+  - recommended-strict

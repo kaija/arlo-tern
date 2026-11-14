@@ -975,7 +975,7 @@ ADR-0002 沒有採用自動停損，但建議記錄異常登出事件並設簡�
 
 ### 工具與專案結構
 
-Monorepo 骨架（工作項目 FND-01）選定的工具。ADR-0019 只決定了語言、Node.js 版本與目錄配置。
+Monorepo 骨架（工作項目 FND-01）、本機 Docker Compose（FND-02）與 CI（FND-03）選定的工具。ADR-0019 只決定了語言、Node.js 版本與目錄配置。
 
 | 項目 | 選定的做法 |
 |---|---|
@@ -995,6 +995,11 @@ Monorepo 骨架（工作項目 FND-01）選定的工具。ADR-0019 只決定了�
 | 容器映像 | 一份 `Dockerfile`，以建置參數選擇服務，兩個服務各自一個映像。映像只含該服務、`packages/shared` 與它們的正式相依，基底是 `node:24-slim`，以非 root 的 `node` 用戶執行 |
 | 本機的 Docker Compose | `docker-compose.yml` 只給本機開發：`postgres`、`connector`、`core` 三個容器，服務等 PostgreSQL 健康後才啟動。正式環境的設定是另一份檔案（OPS-02） |
 | PostgreSQL 版本 | 18，2026-11-14 時最新的穩定主版本（19 還在 RC）。中文關鍵字索引的選型（SPK-06）與 RDS 支援的版本可能會改變這個選擇或換成自建的映像 |
+| CI 的觸發時機 | GitHub Actions，一份 workflow（`.github/workflows/ci.yml`）。每個 PR 與每次 push 到 `main` 都執行，因為目前直接 commit 到 `main`；不依變更的路徑篩選，文件的變更也會跑完整的檢查。同一個分支或 PR 有新的 commit 時取消進行中的執行 |
+| CI 執行的檢查 | `check` job 以 Corepack 取得釘選的 pnpm、依 `.nvmrc` 安裝 Node.js、以 `--frozen-lockfile` 安裝，再依序執行 `CLAUDE.md` 記載的指令：格式檢查、lint、型別檢查、含覆蓋率門檻的測試、建置、OpenAPI spec 的 lint。指令有變動時 workflow 與 `CLAUDE.md` 要一起改。pnpm store 以 `pnpm-lock.yaml` 的雜湊為 key 快取 |
+| CI 試建映像 | `images` job 以 `docker build` 分別建置兩個服務的映像，建完即丟，不推送。這不在 FND-03 的完成條件內；加上它是因為 `Dockerfile` 逐一列出要複製的 workspace 套件，服務新增 workspace 相依時會壞，而其他檢查抓不到。建置並推送映像屬於 OPS-03 |
+| CI 的權限與 action 版本 | workflow 的 token 只有 `contents: read`，checkout 不保留憑證。只使用 GitHub 官方的 action（`actions/checkout`、`actions/setup-node`、`actions/cache`），以完整的 commit SHA 釘選並在註解標明版本（2026-11-14 時的最新版）。沒有自動更新相依的機制，升級時手動同時改 SHA 與註解 |
+| OpenAPI spec 的 lint | Redocly CLI，CI 與本機都用 `@latest`，沒有釘選版本，規則更新可能讓原本通過的 spec 失敗。根目錄的 `redocly.yaml` 採用 `recommended-strict`，把 warning 當成 error：預設的規則集遇到 warning 仍以 0 結束，CI 會擋不住 |
 | 本機資料庫 | 只開在 `127.0.0.1`；帳號密碼是寫在 compose 檔裡的開發用預設值，可用 `.env` 覆寫。compose 目前沒有把資料庫連線設定傳給服務，由 FND-04 與 FND-07 加上 |
 
 ### 未決事項

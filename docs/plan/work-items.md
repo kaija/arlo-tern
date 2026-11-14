@@ -182,7 +182,7 @@ flowchart LR
 |---|---|---|---|---|---|
 | FND-01 | Monorepo 骨架 | ADR-0019 | — | 建立 `apps/mobile`、`services/connector`、`services/core`、`packages/shared` 的 workspace；選定套件管理工具、測試框架、lint 與格式化工具並設定 pre-commit；Node.js 24；**把實際的建置、lint、測試、跑單一測試的指令寫進 `CLAUDE.md`** | 完成 |
 | FND-02 | 本機 Docker Compose | ADR-0020、ADR-0021 | FND-01 | 一個指令啟動 PostgreSQL 與兩個服務的容器；啟動方式寫進 `CLAUDE.md` 與 README | 完成 |
-| FND-03 | CI | ADR-0019 | FND-01 | GitHub Actions 在每個 PR 上執行 lint、型別檢查、測試、建置，以及 OpenAPI spec 的 lint | 未開始 |
+| FND-03 | CI | ADR-0019 | FND-01 | GitHub Actions 在每個 PR 上執行 lint、型別檢查、測試、建置，以及 OpenAPI spec 的 lint | 完成 |
 | FND-04 | 資料庫 schema 與 migration | ADR-0020、設計文件第 4 節 | FND-02 | 選定 migration 工具；建立設計文件第 4.2 節的全部資料表、唯一約束與外鍵（來源訊息的外鍵為刪除時置空）；migration 可以從空資料庫重跑 | 未開始 |
 | FND-05 | 資料存取層與用戶範圍 | ADR-0020 | FND-04 | 所有業務資料的查詢都經過統一的封裝並強制帶用戶範圍；有測試證明無法讀寫其他用戶的資料 | 未開始 |
 | FND-06 | Job queue | ADR-0020 | FND-04 | 整合 pg-boss：延遲工作、定時工作、重試、失敗佇列；可以在資料庫交易內排入工作 | 未開始 |
