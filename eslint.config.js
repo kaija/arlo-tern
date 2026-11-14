@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import prettier from 'eslint-config-prettier';
 import { defineConfig, globalIgnores } from 'eslint/config';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
@@ -16,9 +17,10 @@ export default defineConfig(
     },
   },
   {
-    // Plain JS config files are not part of any tsconfig.
+    // Plain JS config and script files run on Node and are not part of any tsconfig.
     files: ['**/*.{js,mjs,cjs}'],
     extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: { globals: globals.node },
   },
   prettier,
 );

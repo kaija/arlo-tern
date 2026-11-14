@@ -1,0 +1,47 @@
+# Local development stack: PostgreSQL and the two backend services.
+# The production stack (reverse proxy, TLS, secrets) is a separate file, see work item OPS-02.
+name: arlo-tern
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      # Development-only defaults. Override them in .env; never reuse them outside local development.
+      POSTGRES_USER: ${POSTGRES_USER:-arlo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-arlo-dev-only}
+      POSTGRES_DB: ${POSTGRES_DB:-arlo}
+    ports:
+      # Reachable from the host only, for running services and tests outside Docker.
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Holds the users' LINE connections. Run exactly one instance (ADR-0019, ADR-0025)
+  # and publish no ports: only core talks to it, over the internal network.
+  connector:
+    build:
+      context: .
+      args:
+        SERVICE: connector
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  core:
+    build:
+      context: .
+      args:
+        SERVICE: core
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

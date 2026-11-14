@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**The repository holds the design documents and an empty monorepo scaffold (work item `FND-01`). No product code exists yet;** the packages contain placeholders only. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
+**The repository holds the design documents, an empty monorepo scaffold (`FND-01`) and a local Docker Compose stack (`FND-02`). No product code exists yet;** the packages contain placeholders only, and each service runs a placeholder process. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
 
 **The app is the primary surface.** The two official-account channels stay in the MVP but are its lowest-priority work: the beta launches app-only (`LCH-02`) and the channels open later behind a second gate (`LCH-03`). Their work items are marked `[OA]` in `docs/plan/work-items.md`. No item without that mark may depend on one that has it, and no app feature may require an official-account channel.
 
@@ -41,6 +41,15 @@ pnpm vitest run --project core
 pnpm vitest run -t "resolves the shared package"
 ```
 
+Start PostgreSQL and both services locally (Docker required):
+
+```bash
+docker compose up --build     # Ctrl-C stops it; add -d to run in the background
+docker compose down           # stop and remove the containers; add -v to also delete the database volume
+```
+
+PostgreSQL is published on `127.0.0.1:5432` (user, password and database are development-only defaults in `docker-compose.yml`; override them with a `.env` copied from `.env.example`). A changed user, password or database name only applies to an empty volume, so run `docker compose down -v` first. The services publish no ports yet.
+
 Lint the OpenAPI spec after every edit to it; it must report no errors and no warnings:
 
 ```bash
@@ -54,8 +63,11 @@ Things to know about the toolchain (choices are recorded in design §13):
 - Tests live next to the code as `src/**/*.test.ts` and are excluded from the build.
 - Prettier skips `docs/` and all Markdown; project documents stay hand-formatted.
 - The pre-commit hook runs ESLint and Prettier on staged code files and blocks the commit on lint errors.
+- Each service starts from `src/main.ts`. Entry files only wire things together and are excluded from coverage; put logic in modules that have tests.
+- One `Dockerfile` builds either service (`--build-arg SERVICE=connector|core`). An image contains only that service, `packages/shared` and their production dependencies, and runs as the non-root `node` user. A new workspace package that a service depends on must be copied in the `Dockerfile` as well.
+- `docker-compose.yml` is the local stack only. The production stack is a separate file (`OPS-02`). Keep exactly one `connector` and publish no ports for it.
 
-There is no Docker Compose, CI, integration-test or eval command yet. `FND-02`, `FND-03`, `QA-01` and `EVL-02` each add theirs to this file. Do not invent commands before then.
+There is no CI, integration-test or eval command yet. `FND-03`, `QA-01` and `EVL-02` each add theirs to this file. Do not invent commands before then.
 
 ## Planned architecture
 

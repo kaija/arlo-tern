@@ -991,6 +991,11 @@ Monorepo 骨架（工作項目 FND-01）選定的工具。ADR-0019 只決定了�
 | Pre-commit | husky 加 lint-staged，對 staged 的程式檔跑 ESLint 與 Prettier |
 | 套件命名 | `@arlo-tern/shared`、`@arlo-tern/connector`、`@arlo-tern/core`、`@arlo-tern/mobile`，全部 `private` |
 | `apps/mobile` | 目前只是佔位的 workspace，Expo 專案由 APP-01 建立 |
+| 服務的進入點 | 每個服務從 `src/main.ts` 啟動。進入點只負責組裝與啟動，不計入覆蓋率；邏輯放在有測試的模組 |
+| 容器映像 | 一份 `Dockerfile`，以建置參數選擇服務，兩個服務各自一個映像。映像只含該服務、`packages/shared` 與它們的正式相依，基底是 `node:24-slim`，以非 root 的 `node` 用戶執行 |
+| 本機的 Docker Compose | `docker-compose.yml` 只給本機開發：`postgres`、`connector`、`core` 三個容器，服務等 PostgreSQL 健康後才啟動。正式環境的設定是另一份檔案（OPS-02） |
+| PostgreSQL 版本 | 18，2026-11-14 時最新的穩定主版本（19 還在 RC）。中文關鍵字索引的選型（SPK-06）與 RDS 支援的版本可能會改變這個選擇或換成自建的映像 |
+| 本機資料庫 | 只開在 `127.0.0.1`；帳號密碼是寫在 compose 檔裡的開發用預設值，可用 `.env` 覆寫。compose 目前沒有把資料庫連線設定傳給服務，由 FND-04 與 FND-07 加上 |
 
 ### 未決事項
 

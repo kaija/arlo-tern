@@ -31,6 +31,19 @@ pnpm install
 
 `pnpm install` 會一併安裝 pre-commit hook，commit 時對 staged 的程式檔跑 ESLint 與 Prettier。
 
+## 本機啟動
+
+需要 Docker。一個指令啟動 PostgreSQL 與兩個服務：
+
+```bash
+docker compose up --build
+```
+
+- 按 Ctrl-C 停止；加上 `-d` 可以在背景執行。
+- `docker compose down` 停止並移除容器；加上 `-v` 會一併刪除資料庫的資料。
+- PostgreSQL 只開在本機的 `127.0.0.1:5432`。帳號、密碼、資料庫名稱是 `docker-compose.yml` 裡的開發用預設值，要改的話把 `.env.example` 複製成 `.env` 再修改。帳號、密碼、資料庫名稱只在資料庫第一次建立時生效，改了之後要先執行 `docker compose down -v`。這些值只能用在本機開發。
+- 兩個服務目前是佔位的程序，只會啟動並等待停止訊號。
+
 ## 常用指令
 
 ```bash

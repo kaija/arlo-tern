@@ -1,0 +1,15 @@
+# Keep the build context to what the images need.
+.git
+.husky/_
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+docs
+apps
+.env
+.env.*
+.DS_Store
+*.md
+docker-compose.yml
+Dockerfile

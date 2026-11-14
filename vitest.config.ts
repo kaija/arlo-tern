@@ -25,7 +25,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts', 'services/*/src/**/*.ts'],
-      exclude: ['**/*.test.ts'],
+      // Entry files only wire things together and start the process; logic lives in tested modules.
+      exclude: ['**/*.test.ts', 'services/*/src/main.ts'],
       thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
     },
   },
