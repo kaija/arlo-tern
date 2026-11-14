@@ -1,0 +1,43 @@
+{
+  "name": "arlo-tern",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=24.11.0 <25"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "clean": "tsc -b tsconfig.build.json --clean",
+    "typecheck": "tsc -p tsconfig.json && pnpm -r run typecheck",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.json": "prettier --write"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "@vitest/coverage-v8": "^5.1.0",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "prettier": "^3.10.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^5.1.0"
+  }
+}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**This repository is documentation-only. No application code exists yet.** Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
+**The repository holds the design documents and an empty monorepo scaffold (work item `FND-01`). No product code exists yet;** the packages contain placeholders only. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
 
 **The app is the primary surface.** The two official-account channels stay in the MVP but are its lowest-priority work: the beta launches app-only (`LCH-02`) and the channels open later behind a second gate (`LCH-03`). Their work items are marked `[OA]` in `docs/plan/work-items.md`. No item without that mark may depend on one that has it, and no app feature may require an official-account channel.
 
@@ -21,15 +21,41 @@ All project documents are written in Traditional Chinese with technical terms in
 
 ## Commands
 
-The only command that exists today:
+Node.js 24 (`.nvmrc`) and pnpm. The pnpm version is pinned by `packageManager` in `package.json` and supplied by Corepack; run `corepack enable` once if `pnpm` is missing.
+
+```bash
+pnpm install          # also installs the git hooks (husky)
+pnpm typecheck        # tsc on every package, no emit
+pnpm lint             # ESLint with type-aware rules; pnpm lint:fix to fix
+pnpm format:check     # Prettier; pnpm format to write
+pnpm test             # Vitest, all packages
+pnpm test:coverage    # fails under 80 % coverage
+pnpm build            # tsc -b into each package's dist/; pnpm clean removes it
+```
+
+Run a single test by file, by package, or by test name:
+
+```bash
+pnpm vitest run services/core/src/index.test.ts
+pnpm vitest run --project core
+pnpm vitest run -t "resolves the shared package"
+```
+
+Lint the OpenAPI spec after every edit to it; it must report no errors and no warnings:
 
 ```bash
 npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
 ```
 
-Run it after every edit to the spec; it must report no errors and no warnings.
+Things to know about the toolchain (choices are recorded in design §13):
 
-There are no build, lint or test commands yet. Work item `FND-01` (monorepo scaffold) chooses the package manager, test framework and linter, and its done criterion includes writing the real commands, including how to run a single test, into this file. Do not invent commands before then.
+- Typecheck, lint and tests do not need a build. Workspace packages resolve to TypeScript source through the `@arlo-tern/source` export condition; built output resolves to `dist/`. A new workspace package needs the same `exports` shape as `packages/shared/package.json`, a `tsconfig.build.json` listed in the root `tsconfig.build.json`, and a project entry in `vitest.config.ts`.
+- Packages are ESM with `NodeNext` resolution: relative imports carry the `.js` extension.
+- Tests live next to the code as `src/**/*.test.ts` and are excluded from the build.
+- Prettier skips `docs/` and all Markdown; project documents stay hand-formatted.
+- The pre-commit hook runs ESLint and Prettier on staged code files and blocks the commit on lint errors.
+
+There is no Docker Compose, CI, integration-test or eval command yet. `FND-02`, `FND-03`, `QA-01` and `EVL-02` each add theirs to this file. Do not invent commands before then.
 
 ## Planned architecture
 
@@ -51,6 +77,7 @@ These are settled in ADRs. Do not "correct" them back to a general preference:
 - **The backend is TypeScript, not Python** (ADR-0019). Both key libraries, linejs and the OpenAI Agents SDK, are JS/TS only.
 - **The beta runs on a single EC2 instance with Docker Compose in AWS Tokyo**, with the single point of failure accepted. ECS Fargate, RDS and Terragrunt environments come at production launch (ADR-0021).
 - **PostgreSQL only.** No Redis, SQS or vector store (ADR-0020, ADR-0015).
+- **TypeScript is pinned to 6.0, not the latest 7.x.** Expo SDK 58's template and typescript-eslint supported only up to 6.0 when the scaffold was made (design §13). Check both before bumping it.
 - **The agent framework is the OpenAI Agents SDK, the model is Claude.** No OpenAI models and no OpenAI hosted tools. If the adapter validation (`SPK-03`) fails, reopen ADR-0013 rather than switching silently.
 - **Message bodies and LINE credentials are stored with disk encryption only** (ADR-0005). This was chosen against the recommendation and is flagged for re-review before production. Do not add application-level encryption without a new ADR, and do not treat its absence as an oversight.
 
@@ -84,4 +111,4 @@ This is the owner's personal repository. Commit with the personal git profile, n
 
 The owner asked on 2026-11-13 for commits to go straight to `main` rather than through feature branches.
 
-`.DS_Store` is untracked and not ignored; leave it out of commits.
+Commit `pnpm-lock.yaml` together with any dependency change.

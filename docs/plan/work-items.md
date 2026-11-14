@@ -136,7 +136,7 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| SPK-01 | linejs 能力驗證 | ADR-0001、ADR-0003、ADR-0021 | — | 用真實帳號確認並寫成紀錄：QR 與驗證碼的實際順序；端對端加密訊息在一對一與群組的解密範圍；模擬的裝置類型是否擠掉用戶的電腦版 LINE；能否區分一般帳號、群組、官方帳號；服務停擺後能否補收停擺期間的訊息。任何一項不符預期時，提出對 ADR-0001 或 ADR-0003 的修訂 | 未開始 |
+| SPK-01 | linejs 能力驗證 | ADR-0001、ADR-0003、ADR-0021 | — | 用真實帳號確認並寫成紀錄：QR 與驗證碼的實際順序；端對端加密訊息在一對一與群組的解密範圍；模擬的裝置類型是否擠掉用戶的電腦版 LINE；能否區分一般帳號、群組、官方帳號；服務停擺後能否補收停擺期間的訊息。任何一項不符預期時，提出對 ADR-0001 或 ADR-0003 的修訂。另外確認安裝來源：ADR-0001 寫的 `@evex/linejs` 在 npm 上不存在，npm 上有的是 `@evex-dev/linejs`（2026-11-14 查閱） | 未開始 |
 | SPK-02 | linejs 多連線穩定性 | ADR-0001、ADR-0019 | SPK-01 | 在單一 Node 程序內同時維持多個連線，記錄每個連線的記憶體用量、重連行為、分批重連的可行間隔；據此估計 100 個連線的資源需求 | 未開始 |
 | SPK-03 | OpenAI Agents SDK adapter 搭配 Claude Opus 5.5 | ADR-0013 | — | 逐項確認 ADR-0013 列的 8 個驗證項目：工具呼叫與平行工具呼叫、串流、自訂 session 儲存、thinking 區塊原樣回傳、不送出強制的 `tool_choice`、prompt caching 控制、tracing 完全關閉、對話摘要的可行做法。第 1 到 5 項有任何一項無法解決就重開 ADR-0013 | 未開始 |
 | SPK-04 | Expo 取得 iOS 的 FCM registration token | ADR-0018 | — | 在 development build 上，iOS 與 Android 都能取得 FCM registration token 並收到後端經 FCM 發出的推播；記錄選用的套件與設定 | 未開始 |
@@ -180,7 +180,7 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| FND-01 | Monorepo 骨架 | ADR-0019 | — | 建立 `apps/mobile`、`services/connector`、`services/core`、`packages/shared` 的 workspace；選定套件管理工具、測試框架、lint 與格式化工具並設定 pre-commit；Node.js 24；**把實際的建置、lint、測試、跑單一測試的指令寫進 `CLAUDE.md`** | 未開始 |
+| FND-01 | Monorepo 骨架 | ADR-0019 | — | 建立 `apps/mobile`、`services/connector`、`services/core`、`packages/shared` 的 workspace；選定套件管理工具、測試框架、lint 與格式化工具並設定 pre-commit；Node.js 24；**把實際的建置、lint、測試、跑單一測試的指令寫進 `CLAUDE.md`** | 完成 |
 | FND-02 | 本機 Docker Compose | ADR-0020、ADR-0021 | FND-01 | 一個指令啟動 PostgreSQL 與兩個服務的容器；啟動方式寫進 `CLAUDE.md` 與 README | 未開始 |
 | FND-03 | CI | ADR-0019 | FND-01 | GitHub Actions 在每個 PR 上執行 lint、型別檢查、測試、建置，以及 OpenAPI spec 的 lint | 未開始 |
 | FND-04 | 資料庫 schema 與 migration | ADR-0020、設計文件第 4 節 | FND-02 | 選定 migration 工具；建立設計文件第 4.2 節的全部資料表、唯一約束與外鍵（來源訊息的外鍵為刪除時置空）；migration 可以從空資料庫重跑 | 未開始 |
@@ -188,7 +188,7 @@ flowchart LR
 | FND-06 | Job queue | ADR-0020 | FND-04 | 整合 pg-boss：延遲工作、定時工作、重試、失敗佇列；可以在資料庫交易內排入工作 | 未開始 |
 | FND-07 | 設定與 secrets | ADR-0021、設計文件第 9.2 節 | FND-01 | 設計文件第 9.2 節的所有門檻與時間常數都由設定提供，程式裡沒有寫死的數值；secrets 從環境載入，不進 repository | 未開始 |
 | FND-08 | 核心服務骨架 | ADR-0019、設計文件第 6.1 節 | FND-01、FND-07 | 選定 HTTP 框架；實作 `application/problem+json` 錯誤格式、游標分頁、bearer 驗證的掛點、限流；結構化日誌，且不記錄訊息內文、agent 對話內容、LLM 的輸入輸出；API 與 worker 兩種啟動模式 | 未開始 |
-| FND-09 | 由 OpenAPI spec 產生共用型別 | 設計文件第 6 節 | FND-01 | 從 `docs/api/openapi.yaml` 產生型別，供核心服務與 App 共用；spec 變更後型別不同步時 CI 會失敗 | 未開始 |
+| FND-09 | 由 OpenAPI spec 產生共用型別 | 設計文件第 6 節 | FND-01 | 從 `docs/api/openapi.yaml` 產生型別，供核心服務與 App 共用；spec 變更後型別不同步時 CI 會失敗。骨架採用 TypeScript 6.0，而 openapi-typescript 7.13 的 peer 範圍是 `^5.x`（2026-11-14 查閱），做這一項時要先確認相容性或改用別的產生工具 | 未開始 |
 | FND-10 | Claude API client | ADR-0006 | FND-07、EXT-05 | 封裝對 Claude Haiku 5.5 的 structured outputs 呼叫、重試與錯誤分類；記錄每次呼叫的 token 用量但不記錄內容 | 未開始 |
 
 ## ACC 帳號

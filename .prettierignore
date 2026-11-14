@@ -1,0 +1,6 @@
+# Project documents are hand-formatted; the OpenAPI spec is linted with Redocly.
+docs/
+*.md
+pnpm-lock.yaml
+dist/
+coverage/

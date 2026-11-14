@@ -1,0 +1,16 @@
+{
+  "name": "@arlo-tern/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "@arlo-tern/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

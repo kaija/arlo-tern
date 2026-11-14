@@ -973,6 +973,25 @@ ADR-0002 沒有採用自動停損，但建議記錄異常登出事件並設簡�
 
 完整清單在 [ADR 索引](../adr/README.md)。這裡列出會直接影響本文件與 API 的項目。
 
+### 工具與專案結構
+
+Monorepo 骨架（工作項目 FND-01）選定的工具。ADR-0019 只決定了語言、Node.js 版本與目錄配置。
+
+| 項目 | 選定的做法 |
+|---|---|
+| 套件管理 | pnpm workspace，版本以 `package.json` 的 `packageManager` 釘選，透過 Corepack 取得 |
+| Node.js 版本 | 24，`.nvmrc` 指定主版本；`engines` 要求 24.11 以上（linejs 的需求） |
+| TypeScript 版本 | **6.0，不是最新的 7.x。** 這不符合「一律用最新穩定版」的原則。原因：2026-11-14 查到 Expo SDK 58 的範本釘在 `~6.0.3`，typescript-eslint 支援到 `<6.1.0`，而 TypeScript 7 的套件不再提供原本的 compiler API。相依的工具支援 7.x 後再升級 |
+| 模組格式 | ESM（`"type": "module"`），`module` 與 `moduleResolution` 為 `NodeNext`，相對路徑的 import 寫 `.js` 副檔名 |
+| 套件之間的引用 | workspace 套件以自訂的 export condition `@arlo-tern/source` 指向 TypeScript 原始碼，型別檢查、lint、測試都不需要先建置；建置後的程式走預設條件，指向 `dist/` |
+| 建置 | `tsc -b` 搭配 project references，輸出到各套件的 `dist/`，測試檔不輸出 |
+| 測試 | Vitest，一個根設定檔，每個套件是一個 project；覆蓋率門檻 80% |
+| Lint | ESLint 加 typescript-eslint 的 type-aware 規則（`recommendedTypeChecked`） |
+| 格式化 | Prettier。`docs/` 與所有 Markdown 不格式化，文件維持人工排版 |
+| Pre-commit | husky 加 lint-staged，對 staged 的程式檔跑 ESLint 與 Prettier |
+| 套件命名 | `@arlo-tern/shared`、`@arlo-tern/connector`、`@arlo-tern/core`、`@arlo-tern/mobile`，全部 `private` |
+| `apps/mobile` | 目前只是佔位的 workspace，Expo 專案由 APP-01 建立 |
+
 ### 未決事項
 
 | 項目 | 對設計的影響 | 出處 |
