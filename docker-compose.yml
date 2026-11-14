@@ -1,5 +1,7 @@
 # Local development stack: PostgreSQL and the two backend services.
 # The production stack (reverse proxy, TLS, secrets) is a separate file, see work item OPS-02.
+# The variables a service reads are defined in packages/shared/src/config/settings.ts; a test
+# fails when a service's environment block here lists a different set.
 name: arlo-tern
 
 services:
@@ -29,6 +31,20 @@ services:
       args:
         SERVICE: connector
     init: true
+    # Each service lists its own variables: the connector gets none of the core service's
+    # credentials and refuses to start if it is given one. An empty value means "not set",
+    # so a variable that is absent from .env falls back to its default.
+    environment:
+      # Inside the Compose network PostgreSQL is always postgres:5432; POSTGRES_PORT only
+      # moves the port published on the host.
+      DATABASE_HOST: postgres
+      DATABASE_PORT: '5432'
+      DATABASE_USER: ${POSTGRES_USER:-arlo}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-arlo-dev-only}
+      DATABASE_NAME: ${POSTGRES_DB:-arlo}
+      PIPELINE_WINDOW_QUIET_SECONDS: ${PIPELINE_WINDOW_QUIET_SECONDS:-}
+      PIPELINE_WINDOW_MAX_MESSAGES: ${PIPELINE_WINDOW_MAX_MESSAGES:-}
+      PIPELINE_WINDOW_MAX_WAIT_SECONDS: ${PIPELINE_WINDOW_MAX_WAIT_SECONDS:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,6 +55,39 @@ services:
       args:
         SERVICE: core
     init: true
+    environment:
+      # Inside the Compose network PostgreSQL is always postgres:5432; POSTGRES_PORT only
+      # moves the port published on the host.
+      DATABASE_HOST: postgres
+      DATABASE_PORT: '5432'
+      DATABASE_USER: ${POSTGRES_USER:-arlo}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-arlo-dev-only}
+      DATABASE_NAME: ${POSTGRES_DB:-arlo}
+      PIPELINE_WINDOW_QUIET_SECONDS: ${PIPELINE_WINDOW_QUIET_SECONDS:-}
+      PIPELINE_WINDOW_MAX_MESSAGES: ${PIPELINE_WINDOW_MAX_MESSAGES:-}
+      PIPELINE_WINDOW_MAX_WAIT_SECONDS: ${PIPELINE_WINDOW_MAX_WAIT_SECONDS:-}
+      TASK_CONFIDENCE_THRESHOLD: ${TASK_CONFIDENCE_THRESHOLD:-}
+      REMINDER_MAX_PER_TASK: ${REMINDER_MAX_PER_TASK:-}
+      QUIET_HOURS_DEFAULT_START: ${QUIET_HOURS_DEFAULT_START:-}
+      QUIET_HOURS_DEFAULT_END: ${QUIET_HOURS_DEFAULT_END:-}
+      LINE_OA_REPLY_DEADLINE_SECONDS: ${LINE_OA_REPLY_DEADLINE_SECONDS:-}
+      BINDING_CODE_TTL_SECONDS: ${BINDING_CODE_TTL_SECONDS:-}
+      MESSAGE_RETENTION_OPTIONS_DAYS: ${MESSAGE_RETENTION_OPTIONS_DAYS:-}
+      SCAM_CONFIDENCE_HIGH_MIN: ${SCAM_CONFIDENCE_HIGH_MIN:-}
+      SCAM_CONFIDENCE_MEDIUM_MIN: ${SCAM_CONFIDENCE_MEDIUM_MIN:-}
+      WHATSAPP_MONTHLY_BUDGET: ${WHATSAPP_MONTHLY_BUDGET:-}
+      WHATSAPP_DAILY_REPLY_LIMIT_PER_USER: ${WHATSAPP_DAILY_REPLY_LIMIT_PER_USER:-}
+      WHATSAPP_LONG_RESULT_THRESHOLD: ${WHATSAPP_LONG_RESULT_THRESHOLD:-}
+      MEMORY_MAX_ENTRIES: ${MEMORY_MAX_ENTRIES:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_OAUTH_CLIENT_IDS: ${GOOGLE_OAUTH_CLIENT_IDS:-}
+      AUTH_TOKEN_SIGNING_KEY: ${AUTH_TOKEN_SIGNING_KEY:-}
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:-}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy

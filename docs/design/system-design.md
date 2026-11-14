@@ -975,7 +975,7 @@ ADR-0002 沒有採用自動停損，但建議記錄異常登出事件並設簡�
 
 ### 工具與專案結構
 
-Monorepo 骨架（工作項目 FND-01）、本機 Docker Compose（FND-02）與 CI（FND-03）選定的工具。ADR-0019 只決定了語言、Node.js 版本與目錄配置。
+Monorepo 骨架（工作項目 FND-01）、本機 Docker Compose（FND-02）、CI（FND-03）與設定載入（FND-07）選定的工具與做法。ADR-0019 只決定了語言、Node.js 版本與目錄配置。
 
 | 項目 | 選定的做法 |
 |---|---|
@@ -1000,7 +1000,19 @@ Monorepo 骨架（工作項目 FND-01）、本機 Docker Compose（FND-02）與 
 | CI 試建映像 | `images` job 以 `docker build` 分別建置兩個服務的映像，建完即丟，不推送。這不在 FND-03 的完成條件內；加上它是因為 `Dockerfile` 逐一列出要複製的 workspace 套件，服務新增 workspace 相依時會壞，而其他檢查抓不到。建置並推送映像屬於 OPS-03 |
 | CI 的權限與 action 版本 | workflow 的 token 只有 `contents: read`，checkout 不保留憑證。只使用 GitHub 官方的 action（`actions/checkout`、`actions/setup-node`、`actions/cache`），以完整的 commit SHA 釘選並在註解標明版本（2026-11-14 時的最新版）。沒有自動更新相依的機制，升級時手動同時改 SHA 與註解 |
 | OpenAPI spec 的 lint | Redocly CLI，CI 與本機都用 `@latest`，沒有釘選版本，規則更新可能讓原本通過的 spec 失敗。根目錄的 `redocly.yaml` 採用 `recommended-strict`，把 warning 當成 error：預設的規則集遇到 warning 仍以 0 結束，CI 會擋不住 |
-| 本機資料庫 | 只開在 `127.0.0.1`；帳號密碼是寫在 compose 檔裡的開發用預設值，可用 `.env` 覆寫。compose 目前沒有把資料庫連線設定傳給服務，由 FND-04 與 FND-07 加上 |
+| 本機資料庫 | 只開在 `127.0.0.1`；帳號密碼是寫在 compose 檔裡的開發用預設值，可用 `.env` 覆寫。compose 把同一組帳號密碼以 `DATABASE_*` 傳給兩個服務；在 compose 的網路內主機固定是 `postgres:5432`，`POSTGRES_PORT` 只影響開在本機的埠 |
+| 設定的來源與驗證 | 兩個服務的設定全部來自環境變數，啟動時驗證型別與範圍；有缺少或不合法的值就記錄 `config_invalid`（只有變數名稱與違反的規則）並以非 0 結束。驗證用 zod 4（2026-11-14 時最新為 4.6.7）：ADR-0013 的 OpenAI Agents SDK 以 peer dependency 要求 `zod ^4`，AI SDK 也接受，之後工具與 structured outputs 的 schema 會用同一個函式庫。這是 repository 的第一個執行期相依 |
+| 設定的位置 | `packages/shared/src/config/`，以子路徑 `@arlo-tern/shared/config` 匯出，不經過套件的 root entry。每個設定只在 `settings.ts` 定義一次（變數名稱、驗證、預設值），兩個服務共用；第 9.2 節的初始值是其中的預設值，程式的其他地方不可以出現這些數值。loader 是只吃環境變數表的純函式，只有 `main.ts` 讀 `process.env`。這個路徑只給後端用：App 與 root entry 不可以 import，由 ESLint 規則擋下 |
+| 環境變數的命名與格式 | 大寫加底線，不加專案前綴，沿用慣用的名稱（例如 `ANTHROPIC_API_KEY`）。時間長度一律是整數秒，名稱以 `_SECONDS` 結尾；清單用逗號分隔；勿擾時段是 `HH:mm`。數字嚴格解析，不接受空白、正負號、科學記號。沒有設定與空字串視為相同，都是「沒有設定」，所以 `.env` 裡的 `VAR=` 與 compose 的 `${VAR:-}` 會用預設值，不會變成 0。因為沒有前綴，拼錯的變數名稱偵測不到，服務會直接使用預設值 |
+| 第 9.2 節各設定的變數 | 視窗：`PIPELINE_WINDOW_QUIET_SECONDS`、`PIPELINE_WINDOW_MAX_MESSAGES`、`PIPELINE_WINDOW_MAX_WAIT_SECONDS`。task 信心門檻：`TASK_CONFIDENCE_THRESHOLD`。提醒上限：`REMINDER_MAX_PER_TASK`。預設勿擾時段：`QUIET_HOURS_DEFAULT_START`、`QUIET_HOURS_DEFAULT_END`。LINE 官方帳號回覆期限：`LINE_OA_REPLY_DEADLINE_SECONDS`。綁定碼有效期：`BINDING_CODE_TTL_SECONDS`。保存期選項：`MESSAGE_RETENTION_OPTIONS_DAYS`。跨變數的檢查：最長等待不可短於安靜時間；勿擾時段的開始與結束不可相同 |
+| 設定的範圍檢查 | 信心值在 0 到 1 之間；數量至少 1；秒數在 1 到 86400 之間。上限只是為了擋住單位寫錯（例如把秒寫成毫秒），不是產品上的決定，可以直接調整 |
+| 第 9.2 節標為未定的設定 | 可以設定，但**沒有預設值**。沒有設定時載入為 `undefined`，不是 0、也不是無限大，服務照常啟動；型別上是 `number \| undefined`，使用的程式必須明確處理沒有值的情況，不可以在使用處補上數值。功能在沒有值時是關閉還是讓啟動失敗，由實作該功能的工作項目決定。變數：`SCAM_CONFIDENCE_HIGH_MIN` 與 `SCAM_CONFIDENCE_MEDIUM_MIN`（要一起設，中必須小於高）、`WHATSAPP_MONTHLY_BUDGET`、`WHATSAPP_DAILY_REPLY_LIMIT_PER_USER`、`WHATSAPP_LONG_RESULT_THRESHOLD`、`MEMORY_MAX_ENTRIES`。WhatsApp 預算以則數或金額表示、長結果門檻的單位都還沒決定（DEC-05），所以這兩個變數名稱不帶單位，是暫定的，決定後可能改名 |
+| 尚未實作的功能所需的 secrets | 現在只有資料庫連線是必填。其他金鑰都是選填，沒有設定時載入為 `undefined`，不擋啟動；**實作該功能的工作項目把它改成必填**（FND-10、ACC-01、ACC-05、AGT-05），之後缺少時啟動就會失敗。兩個官方帳號通道的金鑰各自成對，只設其中一個是啟動錯誤；它們之後是必填還是「有設定才開啟通道」由官方帳號通道的工作項目決定 |
+| 各個 secret 的變數與形式（暫定） | `DATABASE_PASSWORD`、`ANTHROPIC_API_KEY`、`GOOGLE_MAPS_API_KEY`、`LINE_CHANNEL_SECRET`、`LINE_CHANNEL_ACCESS_TOKEN`、`WHATSAPP_ACCESS_TOKEN`、`WHATSAPP_APP_SECRET`：非空字串。`AUTH_TOKEN_SIGNING_KEY`：至少 32 個字元，假設用對稱金鑰簽章，ACC-01 選定演算法時可以改。`FIREBASE_SERVICE_ACCOUNT_JSON`：服務帳號金鑰檔的 JSON 內容，ACC-05 可以改。`GOOGLE_OAUTH_CLIENT_IDS`：以逗號分隔、驗證 Google ID token 的對象時接受的 client ID，不是 secret。secrets 只從環境變數讀取，沒有支援從檔案讀取 |
+| 資料庫連線設定的形式 | 分成 `DATABASE_HOST`、`DATABASE_PORT`（預設 5432）、`DATABASE_USER`、`DATABASE_PASSWORD`、`DATABASE_NAME` 五個變數，不用單一的連線 URL：密碼不需要做 URL 編碼；兩個服務是否用不同的資料庫角色（DEC-09）不受影響，決定分開時各給不同的帳號密碼即可 |
+| 各服務拿到的設定 | 讀取服務只讀資料庫連線與視窗的三個數值（它負責建立與延後視窗工作）；核心服務讀全部。讀取服務的環境裡出現核心服務的任何一個金鑰時，它會拒絕啟動；在 Docker 之外執行時也一樣，所以讀取服務不能與核心服務共用一份填了金鑰的 `.env`。compose 檔在每個服務各自的 `environment` 區塊逐一列出變數，不用共用的 `env_file`；有測試比對 compose 檔、`.env.example` 與 `settings.ts` 列出的變數是否一致，並檢查 `.env.example` 裡的金鑰都是空的 |
+| secrets 不外洩的做法 | 載入後的 secret 包在 `Secret` 物件裡，轉成字串、JSON 或用 `console.log` 印出時都是 `[redacted]`，要用 `reveal()` 才取得值。設定錯誤的訊息只含變數名稱與規則，不含值，也不帶原始的例外（`JSON.parse` 與 `new URL()` 的錯誤訊息會引用輸入內容）。不記錄載入後的設定 |
+| 設計隱含但第 9.2 節沒有列的設定 | 這次沒有加入，由用到的工作項目依 `CLAUDE.md` 的步驟新增：access token 與 refresh token 的有效期（本節的 API 慣例）、預設保存期（ADR-0004）、同一個對話詐騙推播的間隔（ADR-0009）、WhatsApp 預算的告警比例與保留量、Meta webhook 驗證握手用的 verify token 與發訊用的電話號碼 ID（ADR-0024）、核心服務的啟動模式與各服務的埠 |
 
 ### 未決事項
 

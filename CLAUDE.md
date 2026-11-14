@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**The repository holds the design documents, an empty monorepo scaffold (`FND-01`), a local Docker Compose stack (`FND-02`) and a CI workflow (`FND-03`). No product code exists yet;** the packages contain placeholders only, and each service runs a placeholder process. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
+**The repository holds the design documents, an empty monorepo scaffold (`FND-01`), a local Docker Compose stack (`FND-02`), a CI workflow (`FND-03`) and the configuration loader (`FND-07`). No product code exists yet;** apart from the loader the packages contain placeholders only, and each service runs a placeholder process that validates its configuration and then waits. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
 
 **The app is the primary surface.** The two official-account channels stay in the MVP but are its lowest-priority work: the beta launches app-only (`LCH-02`) and the channels open later behind a second gate (`LCH-03`). Their work items are marked `[OA]` in `docs/plan/work-items.md`. No item without that mark may depend on one that has it, and no app feature may require an official-account channel.
 
@@ -48,7 +48,7 @@ docker compose up --build     # Ctrl-C stops it; add -d to run in the background
 docker compose down           # stop and remove the containers; add -v to also delete the database volume
 ```
 
-PostgreSQL is published on `127.0.0.1:5432` (user, password and database are development-only defaults in `docker-compose.yml`; override them with a `.env` copied from `.env.example`). A changed user, password or database name only applies to an empty volume, so run `docker compose down -v` first. The services publish no ports yet.
+PostgreSQL is published on `127.0.0.1:5432` (user, password and database are development-only defaults in `docker-compose.yml`; override them with a `.env` copied from `.env.example`). A changed user, password or database name only applies to an empty volume, so run `docker compose down -v` first. Compose hands the same database settings to both services. The services publish no ports yet.
 
 Lint the OpenAPI spec after every edit to it; it must report no errors and no warnings. `redocly.yaml` turns warnings into errors, so either one fails the command:
 
@@ -71,6 +71,33 @@ Things to know about the toolchain (choices are recorded in design §13):
 - GitHub Actions are pinned to a full commit SHA with the release in a trailing comment. Nothing updates them automatically; bump the SHA and the comment together by hand. The workflow token is read-only (`permissions: contents: read`); CI does not deploy, publish images or write to the repository (`OPS-03` owns deployment).
 
 There is no integration-test or eval command yet. `QA-01` and `EVL-02` each add theirs to this file. Do not invent commands before then.
+
+## Configuration
+
+Both services take all their settings from environment variables and validate them at start-up. The code is `packages/shared/src/config/`, imported as `@arlo-tern/shared/config`:
+
+- `settings.ts` is the single definition of every setting: the variable name, its validation and its default. The defaults are the initial values of design §9.2. **This is the only file where such a number may appear;** all other code takes the value from the loaded configuration object.
+- `load.ts` has `loadConnectorConfig(env)` and `loadCoreConfig(env)`. They are pure functions of the environment record and return a typed, nested object. Only `src/main.ts` reads `process.env`; everything else receives the configuration as a parameter.
+- A missing or invalid value throws `ConfigError`. `main.ts` logs `config_invalid` with the variable names and the rule each one broke, then exits with code 1, so a bad value stops the container.
+
+Rules:
+
+- **Secrets come from the environment and never enter the repository.** `.env` is git-ignored. `.env.example` holds names and local development values only, and a test fails if a credential in it has a value. Use obviously fake values in tests.
+- **No secret value in logs or errors.** Secrets load as `Secret` objects that print as `[redacted]`; call `.reveal()` only where a client needs the value. `ConfigError` holds variable names and rules, never values. Every validation rule in `fields.ts` has its own message; never pass on a native parse error, because `new URL()` and `JSON.parse` errors quote their input. Never log the loaded configuration or the environment.
+- **Unset and empty mean the same thing.** `VAR=` in an env file and `${VAR:-}` in a compose file are "not set". Numbers are parsed strictly, so nothing turns into `0` by accident.
+- **Undecided values have no default.** The rows design §9.2 marks 未定 (`undecidedSettings`) load as `undefined` when unset, and the service still starts. Do not give them a default and do not write `?? <number>` at the point of use: the value is the owner's decision (`DEC-04`, `DEC-05`, `DEC-06`). The work item that uses one decides whether the feature stays off or start-up fails while it is unset.
+- **Credentials of features that are not built yet are optional** and load as `undefined`. The work item that builds the feature makes its variable required by removing `.optional()` in `settings.ts`. Variables listed in `VARIABLE_GROUPS` must be set together.
+- **Each service gets only what it reads.** The connector reads the database connection and the three conversation-window values, nothing else, and refuses to start when it is given a core credential. `docker-compose.yml` lists the variables per service in its own `environment:` block; do not replace that with a shared `env_file`. The same check applies outside Docker: a connector started from a `.env` that holds credentials, or from a shell that exports `ANTHROPIC_API_KEY`, exits with `config_invalid`.
+- **Backend only.** The mobile app must not import `@arlo-tern/shared/config`, and `packages/shared/src/index.ts` must not re-export it. ESLint enforces both.
+- Variable names carry no project prefix, so a misspelled name is not detected: the service silently uses the default. Copy names from `.env.example`.
+
+To add a setting:
+
+1. Define it in `settings.ts`, in the group of the service or services that read it, with a validation from `fields.ts` and, for a decided value, its default. Durations are whole seconds with `_SECONDS` in the name.
+2. Add it to the configuration type and the mapping in `load.ts`. A rule that spans several variables is a check function there.
+3. Add the variable to the `environment:` block of each service that reads it in `docker-compose.yml`, and to `.env.example`. `deployment-files.test.ts` fails until both match `settings.ts`.
+4. Add tests to `load.test.ts`: the default, an override, and each invalid value.
+5. Record it: a threshold or time constant goes in the table of design §9.2, any other choice in design §13.
 
 ## Planned architecture
 

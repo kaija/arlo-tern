@@ -8,9 +8,17 @@
       "@arlo-tern/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./config": {
+      "@arlo-tern/source": "./src/config/index.ts",
+      "types": "./dist/config/index.d.ts",
+      "default": "./dist/config/index.js"
     }
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
   }
 }

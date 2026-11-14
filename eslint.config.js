@@ -22,5 +22,41 @@ export default defineConfig(
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { globals: globals.node },
   },
+  {
+    // Service configuration is backend only: it names the backend's secrets and is not
+    // written for the React Native runtime. The mobile app must not import it.
+    files: ['apps/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@arlo-tern/shared/config',
+              message: 'Service configuration is backend only; see "Configuration" in CLAUDE.md.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The app imports the root entry of the shared package, so that entry must not pull
+    // the configuration in either.
+    files: ['packages/shared/src/index.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['./config', './config/*'],
+              message: 'Service configuration is backend only; see "Configuration" in CLAUDE.md.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettier,
 );
