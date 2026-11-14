@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current state
 
-**The repository holds the design documents, an empty monorepo scaffold (`FND-01`), a local Docker Compose stack (`FND-02`), a CI workflow (`FND-03`) and the configuration loader (`FND-07`). No product code exists yet;** apart from the loader the packages contain placeholders only, and each service runs a placeholder process that validates its configuration and then waits. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
+**The repository holds the design documents, an empty monorepo scaffold (`FND-01`), a local Docker Compose stack (`FND-02`), a CI workflow (`FND-03`), the database schema with its migrations (`FND-04`) and the configuration loader (`FND-07`). No product code exists yet;** apart from the loader and the schema the packages contain placeholders only, and each service runs a placeholder process that validates its configuration and then waits. Nothing reads or writes the tables yet. Everything under `docs/` is the agreed design for an MVP (closed beta, under 100 users) of a travel planner app for Taiwanese users. The app reads a user's personal LINE chats, extracts tasks into an in-app calendar, sends due reminders, warns about suspicious messages, and offers a personal AI agent reachable from the app, a LINE official account and a WhatsApp official account.
 
 **The app is the primary surface.** The two official-account channels stay in the MVP but are its lowest-priority work: the beta launches app-only (`LCH-02`) and the channels open later behind a second gate (`LCH-03`). Their work items are marked `[OA]` in `docs/plan/work-items.md`. No item without that mark may depend on one that has it, and no app feature may require an official-account channel.
 
@@ -31,6 +31,7 @@ pnpm format:check     # Prettier; pnpm format to write
 pnpm test             # Vitest, all packages
 pnpm test:coverage    # fails under 80 % coverage
 pnpm build            # tsc -b into each package's dist/; pnpm clean removes it
+pnpm db:migrate       # apply pending database migrations; see "Database" for what it needs
 ```
 
 Run a single test by file, by package, or by test name:
@@ -41,10 +42,12 @@ pnpm vitest run --project core
 pnpm vitest run -t "resolves the shared package"
 ```
 
-Start PostgreSQL and both services locally (Docker required):
+Start PostgreSQL, apply the migrations and start both services locally (Docker required):
 
 ```bash
 docker compose up --build     # Ctrl-C stops it; add -d to run in the background
+docker compose up -d postgres # PostgreSQL alone, which is all the database tests need
+docker compose build && docker compose run --rm migrate   # apply a migration you just added
 docker compose down           # stop and remove the containers; add -v to also delete the database volume
 ```
 
@@ -56,28 +59,29 @@ Lint the OpenAPI spec after every edit to it; it must report no errors and no wa
 npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
 ```
 
-CI (`.github/workflows/ci.yml`, GitHub Actions) runs on every pull request and on every push to `main`. Its `check` job runs, from a frozen-lockfile install: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test:coverage`, `pnpm build` and the OpenAPI lint above. Its `images` job builds both service images with `docker build` and discards them. Run the same commands locally before pushing. **Keep the workflow and this section in sync:** when a command here changes or a new check is added, change the workflow in the same commit.
+CI (`.github/workflows/ci.yml`, GitHub Actions) runs on every pull request and on every push to `main`. Its `check` job has a `postgres:18` service container and runs, from a frozen-lockfile install: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test:coverage` (with `TEST_DATABASE_URL` pointing at the service container), `pnpm build`, `pnpm db:migrate` twice (the second run must apply nothing) and the OpenAPI lint above. Its `images` job builds both service images with `docker build` and discards them. Run the same commands locally before pushing. **Keep the workflow and this section in sync:** when a command here changes or a new check is added, change the workflow in the same commit.
 
 Things to know about the toolchain (choices are recorded in design §13):
 
 - Typecheck, lint and tests do not need a build. Workspace packages resolve to TypeScript source through the `@arlo-tern/source` export condition; built output resolves to `dist/`. A new workspace package needs the same `exports` shape as `packages/shared/package.json`, a `tsconfig.build.json` listed in the root `tsconfig.build.json`, and a project entry in `vitest.config.ts`.
 - Packages are ESM with `NodeNext` resolution: relative imports carry the `.js` extension.
-- Tests live next to the code as `src/**/*.test.ts` and are excluded from the build.
+- Tests live next to the code as `src/**/*.test.ts` and are excluded from the build. Support code that only tests use goes in a `testing/` directory, which is excluded from the build and from coverage.
+- `pnpm test` includes the database tests, which need a PostgreSQL server; without one they are skipped. Read "Database" before trusting a green run.
 - Prettier skips `docs/` and all Markdown; project documents stay hand-formatted.
 - The pre-commit hook runs ESLint and Prettier on staged code files and blocks the commit on lint errors.
-- Each service starts from `src/main.ts`. Entry files only wire things together and are excluded from coverage; put logic in modules that have tests.
+- Each service starts from `src/main.ts`; the migration command starts from `packages/shared/src/db/migrate-main.ts`. Entry files only wire things together and are excluded from coverage; put logic in modules that have tests.
 - One `Dockerfile` builds either service (`--build-arg SERVICE=connector|core`). An image contains only that service, `packages/shared` and their production dependencies, and runs as the non-root `node` user. A new workspace package that a service depends on must be copied in the `Dockerfile` as well.
-- `docker-compose.yml` is the local stack only. The production stack is a separate file (`OPS-02`). Keep exactly one `connector` and publish no ports for it.
+- `docker-compose.yml` is the local stack only. The production stack is a separate file (`OPS-02`). Keep exactly one `connector` and publish no ports for it. Its `migrate` service is a one-shot step, not a fourth long-lived container: it exits with code 0 and the two services wait for that.
 - GitHub Actions are pinned to a full commit SHA with the release in a trailing comment. Nothing updates them automatically; bump the SHA and the comment together by hand. The workflow token is read-only (`permissions: contents: read`); CI does not deploy, publish images or write to the repository (`OPS-03` owns deployment).
 
-There is no integration-test or eval command yet. `QA-01` and `EVL-02` each add theirs to this file. Do not invent commands before then.
+There is no integration-test or eval command yet beyond the database tests inside `pnpm test`. `QA-01` and `EVL-02` each add theirs to this file. Do not invent commands before then.
 
 ## Configuration
 
 Both services take all their settings from environment variables and validate them at start-up. The code is `packages/shared/src/config/`, imported as `@arlo-tern/shared/config`:
 
 - `settings.ts` is the single definition of every setting: the variable name, its validation and its default. The defaults are the initial values of design §9.2. **This is the only file where such a number may appear;** all other code takes the value from the loaded configuration object.
-- `load.ts` has `loadConnectorConfig(env)` and `loadCoreConfig(env)`. They are pure functions of the environment record and return a typed, nested object. Only `src/main.ts` reads `process.env`; everything else receives the configuration as a parameter.
+- `load.ts` has `loadConnectorConfig(env)`, `loadCoreConfig(env)` and, for the migration command, `loadDatabaseConfig(env)`, which reads the database connection alone. They are pure functions of the environment record and return a typed, nested object. Only the entry files (`src/main.ts` of a service and `db/migrate-main.ts`) read `process.env`; everything else receives the configuration as a parameter.
 - A missing or invalid value throws `ConfigError`. `main.ts` logs `config_invalid` with the variable names and the rule each one broke, then exits with code 1, so a bad value stops the container.
 
 Rules:
@@ -87,7 +91,7 @@ Rules:
 - **Unset and empty mean the same thing.** `VAR=` in an env file and `${VAR:-}` in a compose file are "not set". Numbers are parsed strictly, so nothing turns into `0` by accident.
 - **Undecided values have no default.** The rows design §9.2 marks 未定 (`undecidedSettings`) load as `undefined` when unset, and the service still starts. Do not give them a default and do not write `?? <number>` at the point of use: the value is the owner's decision (`DEC-04`, `DEC-05`, `DEC-06`). The work item that uses one decides whether the feature stays off or start-up fails while it is unset.
 - **Credentials of features that are not built yet are optional** and load as `undefined`. The work item that builds the feature makes its variable required by removing `.optional()` in `settings.ts`. Variables listed in `VARIABLE_GROUPS` must be set together.
-- **Each service gets only what it reads.** The connector reads the database connection and the three conversation-window values, nothing else, and refuses to start when it is given a core credential. `docker-compose.yml` lists the variables per service in its own `environment:` block; do not replace that with a shared `env_file`. The same check applies outside Docker: a connector started from a `.env` that holds credentials, or from a shell that exports `ANTHROPIC_API_KEY`, exits with `config_invalid`.
+- **Each service gets only what it reads.** The migration step gets the database connection and nothing else. The connector reads the database connection and the three conversation-window values, nothing else, and refuses to start when it is given a core credential. `docker-compose.yml` lists the variables per service in its own `environment:` block; do not replace that with a shared `env_file`. The same check applies outside Docker: a connector started from a `.env` that holds credentials, or from a shell that exports `ANTHROPIC_API_KEY`, exits with `config_invalid`.
 - **Backend only.** The mobile app must not import `@arlo-tern/shared/config`, and `packages/shared/src/index.ts` must not re-export it. ESLint enforces both.
 - Variable names carry no project prefix, so a misspelled name is not detected: the service silently uses the default. Copy names from `.env.example`.
 
@@ -99,6 +103,46 @@ To add a setting:
 4. Add tests to `load.test.ts`: the default, an override, and each invalid value.
 5. Record it: a threshold or time constant goes in the table of design §9.2, any other choice in design §13.
 
+## Database
+
+PostgreSQL 18, accessed through Kysely (a typed query builder with its own migrations) on node-postgres (`pg`). The code is `packages/shared/src/db/`, imported as `@arlo-tern/shared/db`. It is backend only, like the configuration: ESLint blocks the import under `apps/**` and in the package's root entry.
+
+- `migrations/` holds one TypeScript module per migration, written as plain SQL, and `migrations/index.ts` lists them by hand. `migrate.ts` has `migrateToLatest(db)`: it applies the pending ones in name order inside one transaction, so a failure changes nothing. The bookkeeping tables are `kysely_migration` and `kysely_migration_lock`.
+- `schema.ts` describes every table column by column: PostgreSQL type, nullable or not, default or not, and the allowed values of an enumerated column. `Database`, the type behind `Kysely<Database>`, is derived from it. Nothing generates this file; the database test fails when it disagrees with the migrated database.
+- `database.ts` has `createDatabase(config)`, which opens the pool from a loaded `DatabaseConfig`. A `date` column reads as a `YYYY-MM-DD` string and a `time` column as `HH:mm:ss`; neither has a time zone. A `timestamptz` reads as a `Date`.
+- `migrate-main.ts` is the migration command. It reads `DATABASE_*` only, logs one JSON line (`migrations_applied` with the names, or `migrations_failed`), and exits 0 or 1.
+
+Applying migrations:
+
+- **The services do not migrate at start-up.** Locally, `docker compose up` runs the one-shot `migrate` service first, and `docker compose run --rm migrate` runs it again. Outside Docker, run `pnpm build`, then `pnpm db:migrate` with `DATABASE_*` in the shell or uncommented in `.env`. In either image the command is `node /app/packages/shared/dist/db/migrate-main.js`; a deployment runs it before it starts new containers (`OPS-02`, `OPS-03`).
+- Applying twice is a no-op, and the test checks that.
+
+Rules:
+
+- **Never edit a migration that has reached `main`.** Add a new one. Migrations only go forward; there is no `down`.
+- **Every business table has `user_id`**, also a child table whose parent already has one. Only `invites` and `consent_documents` have none (`GLOBAL_TABLES`); do not add to that list without a reason that would survive review. Nothing in the database checks that a child row's `user_id` equals its parent's; the data-access layer (`FND-05`) owns that.
+- **Derived data has no column that could hold message text.** The test lists the text and JSON columns of `tasks`, `task_proposals`, `scam_alerts`, `memory_entries` and `notifications` in `DERIVED_DATA_CONTENT_COLUMNS`; a new one there needs the same scrutiny as the ADR-0004 invariant.
+- **References to a source message are `ON DELETE SET NULL`**, and every foreign-key column has an index. Both are tested.
+- **No value of design §9.2 in SQL**: no default retention, quiet hours, reminder limit or code lifetime. Only `id`, `created_at` and `updated_at` have a database default; the application writes `updated_at`.
+- **Message text and LINE credentials are plain columns** (ADR-0005). Do not add encryption in a migration.
+- Deliberately absent, each owned by another work item: the keyword index on `messages.text` (`AGT-04`, after `SPK-06`), database roles and grants (`DEC-09`), the connector's connection lease (ADR-0025), and pg-boss's tables (`FND-06`; enqueue inside a transaction with pg-boss's own `fromKysely(trx)`).
+- The remaining conventions (identifier and column types, which columns get a `CHECK`, delete behaviour, natural keys) are in the 工具與專案結構 table of the design document. Follow them, and record a new choice there.
+
+To add a migration:
+
+1. Create `packages/shared/src/db/migrations/NNNN_short_name.ts` with the next four-digit number, exporting `up(db)` only, and add it to `migrations/index.ts`. A test fails when the numbers are not consecutive.
+2. Change `schema.ts` to match, in the same commit.
+3. Extend the expectations in `migrations.test.ts`: a new foreign key goes in `REFERENCES`, a key that is not `PRIMARY KEY (id)` in `KEYS`.
+4. Run the database tests, then `docker compose run --rm migrate` (after `docker compose build`) against your local database.
+5. Record a new convention or a gap you filled in the design document, and update section 4.2 there when the data model itself changes.
+
+Database tests:
+
+- They are ordinary Vitest tests (`packages/shared/src/db/migrations.test.ts`). For each test file `testing/test-database.ts` creates an empty database with a random name on the server, and drops it afterwards. They never touch the development database.
+- The server is `TEST_DATABASE_URL` when set, otherwise the Compose PostgreSQL on `127.0.0.1:5432` with its development defaults. Start it with `docker compose up -d postgres`.
+- **Without a server the database tests are skipped, and the run is still green.** A warning says so, but Vitest's reporter for agent sessions hides it: check that the summary shows no skipped tests, or pass `--reporter=default`. When `CI` or `TEST_DATABASE_URL` is set, an unreachable server fails the run instead.
+- Run them before pushing a change to anything under `db/`. `pnpm test:coverage` also passes without a server today, so coverage alone does not prove they ran.
+
 ## Planned architecture
 
 A TypeScript monorepo on Node.js 24 with this layout (ADR-0019):
@@ -108,7 +152,7 @@ A TypeScript monorepo on Node.js 24 with this layout (ADR-0019):
 - `services/core`: the app API, official-account webhooks, the agent, the message pipeline worker, reminders and push sending. One image, started in API or worker mode.
 - `packages/shared`: shared types, the database schema and migrations, API contracts.
 
-PostgreSQL is the only stateful component; the job queue is pg-boss on the same database (ADR-0020). The two services exchange data only through PostgreSQL. Core calls the connector through an internal-only control interface for linking and disconnecting.
+PostgreSQL is the only stateful component; the job queue is pg-boss on the same database (ADR-0020). The schema, its migrations and the Kysely types are in `packages/shared/src/db/`. The two services exchange data only through PostgreSQL. Core calls the connector through an internal-only control interface for linking and disconnecting.
 
 The message pipeline debounces messages per conversation, then makes one Claude Haiku 5.5 call that returns a scam verdict and task operations as structured output (ADR-0007). The agent runs on the OpenAI Agents SDK (JS) with Claude Opus 5.5 behind the AI SDK adapter (ADR-0013).
 

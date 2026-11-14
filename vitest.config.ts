@@ -25,8 +25,14 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts', 'services/*/src/**/*.ts'],
-      // Entry files only wire things together and start the process; logic lives in tested modules.
-      exclude: ['**/*.test.ts', 'services/*/src/main.ts'],
+      // Entry files only wire things together and start the process; logic lives in tested
+      // modules. `testing/` directories hold support code for tests.
+      exclude: [
+        '**/*.test.ts',
+        '**/testing/**',
+        'services/*/src/main.ts',
+        'packages/shared/src/db/migrate-main.ts',
+      ],
       thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
     },
   },

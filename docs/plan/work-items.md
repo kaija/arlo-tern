@@ -183,9 +183,9 @@ flowchart LR
 | FND-01 | Monorepo 骨架 | ADR-0019 | — | 建立 `apps/mobile`、`services/connector`、`services/core`、`packages/shared` 的 workspace；選定套件管理工具、測試框架、lint 與格式化工具並設定 pre-commit；Node.js 24；**把實際的建置、lint、測試、跑單一測試的指令寫進 `CLAUDE.md`** | 完成 |
 | FND-02 | 本機 Docker Compose | ADR-0020、ADR-0021 | FND-01 | 一個指令啟動 PostgreSQL 與兩個服務的容器；啟動方式寫進 `CLAUDE.md` 與 README | 完成 |
 | FND-03 | CI | ADR-0019 | FND-01 | GitHub Actions 在每個 PR 上執行 lint、型別檢查、測試、建置，以及 OpenAPI spec 的 lint | 完成 |
-| FND-04 | 資料庫 schema 與 migration | ADR-0020、設計文件第 4 節 | FND-02 | 選定 migration 工具；建立設計文件第 4.2 節的全部資料表、唯一約束與外鍵（來源訊息的外鍵為刪除時置空）；migration 可以從空資料庫重跑 | 未開始 |
-| FND-05 | 資料存取層與用戶範圍 | ADR-0020 | FND-04 | 所有業務資料的查詢都經過統一的封裝並強制帶用戶範圍；有測試證明無法讀寫其他用戶的資料 | 未開始 |
-| FND-06 | Job queue | ADR-0020 | FND-04 | 整合 pg-boss：延遲工作、定時工作、重試、失敗佇列；可以在資料庫交易內排入工作 | 未開始 |
+| FND-04 | 資料庫 schema 與 migration | ADR-0020、設計文件第 4 節 | FND-02 | 選定 migration 工具；建立設計文件第 4.2 節的全部資料表、唯一約束與外鍵（來源訊息的外鍵為刪除時置空）；migration 可以從空資料庫重跑 | 完成 |
+| FND-05 | 資料存取層與用戶範圍 | ADR-0020 | FND-04 | 所有業務資料的查詢都經過統一的封裝並強制帶用戶範圍；有測試證明無法讀寫其他用戶的資料。以 Kysely 實作（設計文件第 14 節「工具與專案結構」）；每張業務資料表都有 `user_id`，但子資料列與上層的 `user_id` 是否一致沒有資料庫約束，由這一層保證 | 未開始 |
+| FND-06 | Job queue | ADR-0020 | FND-04 | 整合 pg-boss：延遲工作、定時工作、重試、失敗佇列；可以在資料庫交易內排入工作。在交易內排入工作用 pg-boss 內建的 `fromKysely(trx)`（FND-04 以 pg-boss 12.38 實測可行）；pg-boss 自己的資料表由這一項建立 | 未開始 |
 | FND-07 | 設定與 secrets | ADR-0021、設計文件第 9.2 節 | FND-01 | 設計文件第 9.2 節的所有門檻與時間常數都由設定提供，程式裡沒有寫死的數值；secrets 從環境載入，不進 repository | 完成 |
 | FND-08 | 核心服務骨架 | ADR-0019、設計文件第 6.1 節 | FND-01、FND-07 | 選定 HTTP 框架；實作 `application/problem+json` 錯誤格式、游標分頁、bearer 驗證的掛點、限流；結構化日誌，且不記錄訊息內文、agent 對話內容、LLM 的輸入輸出；API 與 worker 兩種啟動模式 | 未開始 |
 | FND-09 | 由 OpenAPI spec 產生共用型別 | 設計文件第 6 節 | FND-01 | 從 `docs/api/openapi.yaml` 產生型別，供核心服務與 App 共用；spec 變更後型別不同步時 CI 會失敗。骨架採用 TypeScript 6.0，而 openapi-typescript 7.13 的 peer 範圍是 `^5.x`（2026-11-14 查閱），做這一項時要先確認相容性或改用別的產生工具 | 未開始 |
@@ -200,7 +200,7 @@ flowchart LR
 | ACC-03 | 帳號與設定 | ADR-0004、ADR-0010 | ACC-01 | 實作 tag `Account` 中的 `/me` 與 `/me/settings`：保存期、時區、勿擾時段、各類通知開關。保存期的選項在設定裡可以調整（`MESSAGE_RETENTION_OPTIONS_DAYS`），OpenAPI spec 的 `RetentionDays` 卻把 `[7, 30, 90]` 寫死成 enum，兩者不一致，做這一項時決定以哪一邊為準；預設保存期也要加進設定 | 未開始 |
 | ACC-04 | 裝置與推播 token | ADR-0018 | ACC-01 | 實作推播 token 的註冊與刪除；一個用戶可以有多台裝置；登出時刪除該裝置的 token | 未開始 |
 | ACC-05 | 推播發送與通知中心 | ADR-0018 | ACC-04、FND-06、EXT-02 | 推播發送 worker：呼叫 FCM HTTP v1、重試、清除失效的 token、尊重各類通知開關；payload 只有概述；每則推播同時寫入通知中心；實作 tag `Notifications` 的端點。把設定中的 `FIREBASE_SERVICE_ACCOUNT_JSON` 改成必填 | 未開始 |
-| ACC-06 | 帳號刪除 | ADR-0022 | ACC-01、CON-05、FND-06 | 帳號刪除的背景工作：以新的 Google ID token 再次確認、立即撤銷所有 token、中斷 LINE 連結、刪除該用戶的所有資料與官方帳號綁定；有測試確認刪除後沒有殘留資料 | 未開始 |
+| ACC-06 | 帳號刪除 | ADR-0022 | ACC-01、CON-05、FND-06 | 帳號刪除的背景工作：以新的 Google ID token 再次確認、立即撤銷所有 token、中斷 LINE 連結、刪除該用戶的所有資料與官方帳號綁定；有測試確認刪除後沒有殘留資料。`consent_records` 對用戶的外鍵沒有設定刪除行為，還有同意紀錄時刪不掉用戶：同意紀錄要保留、去識別化還是刪除（ADR-0022 留待另行處理）在這一項明確處理。`whatsapp_outbound_log` 的資料列會留下，只把 `user_id` 置空 | 未開始 |
 | ACC-07 | 帳號刪除完成的通知 | ADR-0022 | ACC-06、DEC-07 | 依 DEC-07 決定的管道，在刪除完成後通知用戶 | 未開始 |
 
 ## CON 讀取服務
@@ -226,7 +226,7 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| PIP-01 | 對話視窗機制 | ADR-0007 | CON-03 | 每個對話同時只有一個未處理的視窗；三個觸發條件（安靜時間、訊息上限、最長等待）先到先觸發，數值來自設定 | 未開始 |
+| PIP-01 | 對話視窗機制 | ADR-0007 | CON-03 | 每個對話同時只有一個未處理的視窗；三個觸發條件（安靜時間、訊息上限、最長等待）先到先觸發，數值來自設定。資料表上已有 partial unique index：`processed_at` 為空的視窗每個對話只能有一筆，所以視窗結束時不論結果都要寫入 `processed_at`；`pipeline_windows.status` 的值在這一項訂定 | 未開始 |
 | PIP-02 | 管線 prompt 與輸出 schema | ADR-0006、ADR-0007、ADR-0009 | FND-10、EVL-02 | 一次呼叫同時輸出詐騙判定與 task 操作，以 structured outputs 約束；詐騙手法分類放在可獨立更新的設定檔；呼叫不帶任何工具；用 EVL-02 跑出 Claude Haiku 5.5 的基準結果並記錄下來，品質不足時依 ADR-0006 評估改用 Claude Sonnet 5.5 | 未開始 |
 | PIP-03 | 管線 worker | ADR-0007 | PIP-01、PIP-02 | 組合輸入（新訊息、前文、未完成 task、中繼資料）並呼叫模型；以視窗為鍵做到冪等；失敗重試，重試用盡進失敗佇列且不阻塞其他對話；丟棄指向不存在或不屬於該對話的 task 的操作 | 未開始 |
 | PIP-04 | Task 分流 | ADR-0008 | PIP-03、TSK-01、TSK-03 | 依信心門檻把操作套用到行事曆或建立待確認項目；用戶修改過的 task 一律建立待確認項目；自動套用的變更留變更紀錄；同一個 task 的舊待確認項目標記為被取代；套用時產生提醒 | 未開始 |
@@ -253,7 +253,7 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| TRP-01 | Trip 與行程項目 | ADR-0016 | FND-05、FND-08、ACC-01 | 實作 tag `Trips` 的端點：Trip 的建立、查詢、修改、刪除；行程項目的新增、修改、移動、刪除、當日重排；變更紀錄與還原；時間以 Trip 的時區解讀 | 未開始 |
+| TRP-01 | Trip 與行程項目 | ADR-0016 | FND-05、FND-08、ACC-01 | 實作 tag `Trips` 的端點：Trip 的建立、查詢、修改、刪除；行程項目的新增、修改、移動、刪除、當日重排；變更紀錄與還原；時間以 Trip 的時區解讀。`trip_changes.item_id` 沒有外鍵，行程項目刪除後紀錄仍保留它的識別碼 | 未開始 |
 | TRP-02 | Trip 的提醒 | ADR-0016、ADR-0010 | TRP-01、TSK-03、DEC-02 | 依 DEC-02 的決定實作 Trip 與行程項目的提醒 | 未開始 |
 
 ## AGT Agent
@@ -280,7 +280,7 @@ flowchart LR
 | OAC-03 | [OA] LINE 官方帳號的回覆流程 | ADR-0011 | OAC-02、AGT-06、ACC-05 | 顯示 loading animation；期限內用 reply 回覆；逾時先用 reply 回「處理中」，結果寫進 App 對話並發 App push；**永不使用 LINE 的 push message**；提供這個通道的執行次數與逾時比例指標 | 未開始 |
 | OAC-04 | [OA] WhatsApp webhook | ADR-0024 | OAC-01、EXT-04、FND-08 | 實作 tag `Webhooks` 中的 WhatsApp 端點：GET 驗證握手、驗證 `X-Hub-Signature-256`、立即回 200、去重、以 business-scoped user ID 處理綁定、不保存電話號碼、未綁定的用戶每個視窗只回一次。驗證握手用的 verify token 與發訊用的電話號碼 ID 還不在設定裡，在這一項加入 | 未開始 |
 | OAC-05 | [OA] WhatsApp 官方帳號的回覆流程 | ADR-0024 | OAC-04、AGT-06 | typing indicator；短答案直接回；長結果把完整內容寫進 App 並只回一則摘要加 App 連結；只在 customer service window 內發送，不發 template 訊息；每則送出的訊息都寫入紀錄 | 未開始 |
-| OAC-06 | [OA] WhatsApp 預算控管 | ADR-0024 | OAC-05、DEC-05 | 每月全域預算與每位用戶的每日上限；達到上限時每個視窗只回一次固定訊息，之後不回應；保留一部分預算給固定訊息；提供送出則數與預算使用率的指標，用量達門檻時告警；DEC-05 決定的數值回填到設計文件第 9.2 節 | 未開始 |
+| OAC-06 | [OA] WhatsApp 預算控管 | ADR-0024 | OAC-05、DEC-05 | 每月全域預算與每位用戶的每日上限；達到上限時每個視窗只回一次固定訊息，之後不回應；保留一部分預算給固定訊息；提供送出則數與預算使用率的指標，用量達門檻時告警；DEC-05 決定的數值回填到設計文件第 9.2 節。`whatsapp_outbound_log.user_id` 可為空（回覆未綁定用戶的訊息沒有用戶；用戶刪除後置空），計數時不可以只算有用戶的資料列 | 未開始 |
 | OAC-07 | [OA] 在 App 接續官方帳號通道的對話 | ADR-0011、ADR-0014、ADR-0024 | AGT-07、OAC-03、OAC-05 | 官方帳號通道的對話出現在 App 的 agent 對話列表；從 App 接續時這一輪只在 App 內進行，回覆不送到 LINE 或 WhatsApp；用戶回到官方帳號時 agent 看得到 App 內的這幾輪；同一個對話不論從哪個通道發起，同時只有一個進行中的回覆 | 未開始 |
 
 ## APP App
@@ -310,7 +310,7 @@ flowchart LR
 |---|---|---|---|---|---|
 | OPS-01 | 基礎設施 | ADR-0021 | — | 用 Terraform 在 AWS 東京區域建立 EC2、安全群組（對外只開 443）、加密的 EBS、備份用的 S3 | 未開始 |
 | OPS-02 | 線上 Docker Compose | ADR-0021 | OPS-01、FND-02 | 反向代理負責 TLS；`core-api`、`core-worker`、`connector`、PostgreSQL；讀取服務與資料庫不對外開放；secrets 以環境檔或 secret 服務注入，每個服務各自一份，讀取服務不可以拿到核心服務的金鑰（拿到會拒絕啟動） | 未開始 |
-| OPS-03 | 部署流程 | ADR-0019、ADR-0021 | OPS-02、FND-03 | GitHub Actions 建置並推送映像；兩個服務可以分開部署，部署核心服務不重啟讀取服務；部署讀取服務時先停掉舊的容器再啟動新的，任何時間只有一個讀取服務在執行（ADR-0025）；部署步驟寫進 README | 未開始 |
+| OPS-03 | 部署流程 | ADR-0019、ADR-0021 | OPS-02、FND-03 | GitHub Actions 建置並推送映像；兩個服務可以分開部署，部署核心服務不重啟讀取服務；部署讀取服務時先停掉舊的容器再啟動新的，任何時間只有一個讀取服務在執行（ADR-0025）；部署步驟寫進 README。啟動新版本的容器前先執行 migration 指令（`CLAUDE.md` 的 Database 一節）；服務啟動時不會自己執行 | 未開始 |
 | OPS-04 | 備份與還原 | ADR-0021 | OPS-02 | PostgreSQL 每日備份到 S3，加密、限制存取、設定保存天數；完成一次還原演練並記錄；保存天數回填到隱私政策 | 未開始 |
 | OPS-05 | 指標與告警 | ADR-0002、設計文件第 10.1 節 | OPS-02、CON-02、PIP-03 | 設計文件第 10.1 節列出的指標；告警：異常登出數突增、管線佇列持續堆積、備份失敗。官方帳號通道的指標不在這一項：LINE 逾時比例由 OAC-03 負責，WhatsApp 的送出則數、預算使用率與告警由 OAC-06 負責 | 未開始 |
 | OPS-06 | 資料庫存取控管 | ADR-0005 | OPS-02、DEC-09 | 資料庫只接受內部網路連線；備份的存取權限受限；依 DEC-09 的決定設定資料庫角色 | 未開始 |
@@ -321,7 +321,7 @@ flowchart LR
 
 | ID | 工作項目 | 出處 | 相依 | 完成條件 | 狀態 |
 |---|---|---|---|---|---|
-| QA-01 | 整合測試基礎 | 設計文件第 11 節 | FND-05、FND-06、CON-01 | 測試可以啟動真實的 PostgreSQL 容器、使用假的 connector、重播錄製的模型回應；跑法寫進 `CLAUDE.md` | 未開始 |
+| QA-01 | 整合測試基礎 | 設計文件第 11 節 | FND-05、FND-06、CON-01 | 測試可以啟動真實的 PostgreSQL 容器、使用假的 connector、重播錄製的模型回應；跑法寫進 `CLAUDE.md`。FND-04 已有為每個測試檔建立空資料庫的做法（`packages/shared/src/db/testing/`），可以沿用 | 未開始 |
 | QA-02 | 契約測試 | 設計文件第 11 節 | FND-08、FND-09 | 每個已實作端點的請求與回應都對照 OpenAPI spec 驗證 | 未開始 |
 | QA-03 | 訊息到提醒的端對端測試 | 設計文件第 11 節 | QA-01、PIP-04、PIP-05、TSK-03、TSK-06 | 用假的 connector 注入訊息，驗證：產生 task 與待確認項目、改期與取消、提醒、詐騙警告、管線冪等、保存期清除後來源參照置空 | 未開始 |
 | QA-04 | 安全測試 | 設計文件第 7 節 | ACC-01、TSK-01、TRP-01、SCM-01、AGT-07、PIP-03 | 跨用戶存取一律 404；prompt injection 樣本不會讓管線產生 schema 以外的動作，也不會讓 agent 跨用戶或未經確認執行破壞性操作。官方帳號通道的部分在 QA-05 | 未開始 |

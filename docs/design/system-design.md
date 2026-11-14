@@ -975,7 +975,7 @@ ADR-0002 沒有採用自動停損，但建議記錄異常登出事件並設簡�
 
 ### 工具與專案結構
 
-Monorepo 骨架（工作項目 FND-01）、本機 Docker Compose（FND-02）、CI（FND-03）與設定載入（FND-07）選定的工具與做法。ADR-0019 只決定了語言、Node.js 版本與目錄配置。
+Monorepo 骨架（工作項目 FND-01）、本機 Docker Compose（FND-02）、CI（FND-03）、資料庫 schema 與 migration（FND-04）與設定載入（FND-07）選定的工具與做法。ADR-0019 只決定了語言、Node.js 版本與目錄配置；ADR-0020 只決定了用 PostgreSQL 與 pg-boss、schema 放在共用套件。
 
 | 項目 | 選定的做法 |
 |---|---|
@@ -993,10 +993,10 @@ Monorepo 骨架（工作項目 FND-01）、本機 Docker Compose（FND-02）、C
 | `apps/mobile` | 目前只是佔位的 workspace，Expo 專案由 APP-01 建立 |
 | 服務的進入點 | 每個服務從 `src/main.ts` 啟動。進入點只負責組裝與啟動，不計入覆蓋率；邏輯放在有測試的模組 |
 | 容器映像 | 一份 `Dockerfile`，以建置參數選擇服務，兩個服務各自一個映像。映像只含該服務、`packages/shared` 與它們的正式相依，基底是 `node:24-slim`，以非 root 的 `node` 用戶執行 |
-| 本機的 Docker Compose | `docker-compose.yml` 只給本機開發：`postgres`、`connector`、`core` 三個容器，服務等 PostgreSQL 健康後才啟動。正式環境的設定是另一份檔案（OPS-02） |
+| 本機的 Docker Compose | `docker-compose.yml` 只給本機開發：`postgres`、`connector`、`core` 三個常駐的容器，加上一次性的 `migrate` 步驟（FND-04）。`migrate` 等 PostgreSQL 健康後套用 migration 並結束，兩個服務等它成功才啟動。正式環境的設定是另一份檔案（OPS-02） |
 | PostgreSQL 版本 | 18，2026-11-14 時最新的穩定主版本（19 還在 RC）。中文關鍵字索引的選型（SPK-06）與 RDS 支援的版本可能會改變這個選擇或換成自建的映像 |
 | CI 的觸發時機 | GitHub Actions，一份 workflow（`.github/workflows/ci.yml`）。每個 PR 與每次 push 到 `main` 都執行，因為目前直接 commit 到 `main`；不依變更的路徑篩選，文件的變更也會跑完整的檢查。同一個分支或 PR 有新的 commit 時取消進行中的執行 |
-| CI 執行的檢查 | `check` job 以 Corepack 取得釘選的 pnpm、依 `.nvmrc` 安裝 Node.js、以 `--frozen-lockfile` 安裝，再依序執行 `CLAUDE.md` 記載的指令：格式檢查、lint、型別檢查、含覆蓋率門檻的測試、建置、OpenAPI spec 的 lint。指令有變動時 workflow 與 `CLAUDE.md` 要一起改。pnpm store 以 `pnpm-lock.yaml` 的雜湊為 key 快取 |
+| CI 執行的檢查 | `check` job 以 Corepack 取得釘選的 pnpm、依 `.nvmrc` 安裝 Node.js、以 `--frozen-lockfile` 安裝，再依序執行 `CLAUDE.md` 記載的指令：格式檢查、lint、型別檢查、含覆蓋率門檻的測試、建置、以建置後的指令套用 migration 兩次（第二次必須沒有東西可套用）、OpenAPI spec 的 lint。job 帶一個 `postgres:18` 的 service container 供資料庫測試與 migration 使用，帳號密碼只存在於該 job。指令有變動時 workflow 與 `CLAUDE.md` 要一起改。pnpm store 以 `pnpm-lock.yaml` 的雜湊為 key 快取 |
 | CI 試建映像 | `images` job 以 `docker build` 分別建置兩個服務的映像，建完即丟，不推送。這不在 FND-03 的完成條件內；加上它是因為 `Dockerfile` 逐一列出要複製的 workspace 套件，服務新增 workspace 相依時會壞，而其他檢查抓不到。建置並推送映像屬於 OPS-03 |
 | CI 的權限與 action 版本 | workflow 的 token 只有 `contents: read`，checkout 不保留憑證。只使用 GitHub 官方的 action（`actions/checkout`、`actions/setup-node`、`actions/cache`），以完整的 commit SHA 釘選並在註解標明版本（2026-11-14 時的最新版）。沒有自動更新相依的機制，升級時手動同時改 SHA 與註解 |
 | OpenAPI spec 的 lint | Redocly CLI，CI 與本機都用 `@latest`，沒有釘選版本，規則更新可能讓原本通過的 spec 失敗。根目錄的 `redocly.yaml` 採用 `recommended-strict`，把 warning 當成 error：預設的規則集遇到 warning 仍以 0 結束，CI 會擋不住 |
@@ -1013,6 +1013,23 @@ Monorepo 骨架（工作項目 FND-01）、本機 Docker Compose（FND-02）、C
 | 各服務拿到的設定 | 讀取服務只讀資料庫連線與視窗的三個數值（它負責建立與延後視窗工作）；核心服務讀全部。讀取服務的環境裡出現核心服務的任何一個金鑰時，它會拒絕啟動；在 Docker 之外執行時也一樣，所以讀取服務不能與核心服務共用一份填了金鑰的 `.env`。compose 檔在每個服務各自的 `environment` 區塊逐一列出變數，不用共用的 `env_file`；有測試比對 compose 檔、`.env.example` 與 `settings.ts` 列出的變數是否一致，並檢查 `.env.example` 裡的金鑰都是空的 |
 | secrets 不外洩的做法 | 載入後的 secret 包在 `Secret` 物件裡，轉成字串、JSON 或用 `console.log` 印出時都是 `[redacted]`，要用 `reveal()` 才取得值。設定錯誤的訊息只含變數名稱與規則，不含值，也不帶原始的例外（`JSON.parse` 與 `new URL()` 的錯誤訊息會引用輸入內容）。不記錄載入後的設定 |
 | 設計隱含但第 9.2 節沒有列的設定 | 這次沒有加入，由用到的工作項目依 `CLAUDE.md` 的步驟新增：access token 與 refresh token 的有效期（本節的 API 慣例）、預設保存期（ADR-0004）、同一個對話詐騙推播的間隔（ADR-0009）、WhatsApp 預算的告警比例與保留量、Meta webhook 驗證握手用的 verify token 與發訊用的電話號碼 ID（ADR-0024）、核心服務的啟動模式與各服務的埠 |
+| 資料庫函式庫與 migration 工具 | Kysely 0.29（型別化的 query builder，內建 migration）加 node-postgres（`pg` 8）。理由：pg-boss 12 自己就用 `pg`，映像裡只有一種 driver；pg-boss 內建 `fromKysely(trx)`，可以在寫入業務資料的同一個交易內排入工作（2026-11-14 以 pg-boss 12.38.2 實測：rollback 後沒有工作，commit 後有一筆）；Kysely 不是 ORM，FND-05 的用戶範圍封裝可以直接包在它上面。沒有選 Drizzle：穩定版停在 0.45、1.0 還在 rc，而且它的 migration 是 SQL 檔加 journal，`tsc` 不會輸出，要另外複製進映像。pg-boss 的相依由 FND-06 加入 |
+| Migration 的形式 | 每個 migration 是一個 TypeScript 模組，內容是原生 SQL，名稱以四位數序號開頭，在 `packages/shared/src/db/migrations/index.ts` 逐一列出；不掃描目錄，所以從原始碼（測試）與從建置後的映像跑的是同一份清單。只往前，沒有 `down`，要復原就再加一個 migration；已經套用過的 migration 不再修改。尚未套用的 migration 在同一個交易內執行，失敗時資料庫維持原狀。套用紀錄在 `kysely_migration` 與 `kysely_migration_lock` 兩張表 |
+| 套用 migration 的時機 | 服務啟動時不會自己套用。指令是 `node packages/shared/dist/db/migrate-main.js`（本機是 `pnpm db:migrate`），兩個映像都有，只讀 `DATABASE_*`，不需要其他設定或金鑰。本機 compose 的 `migrate` 步驟執行的就是它；正式環境由 OPS-02、OPS-03 在啟動新版本的容器前執行 |
+| schema 的型別定義 | `packages/shared/src/db/schema.ts` 逐欄描述每張表（型別、可否為空、有無預設值、允許的值），Kysely 的 `Database` 型別由它推導，以 `@arlo-tern/shared/db` 匯出（只給後端用，與 `@arlo-tern/shared/config` 相同，由 ESLint 擋下 App 與 root entry 的 import）。資料庫測試把這份描述與套用 migration 後的資料庫逐欄比對，兩邊不一致就失敗 |
+| 識別碼與欄位型別 | 主鍵 `id` 是 `uuid`，沒有給值時由資料庫以 `gen_random_uuid()` 產生，不需要擴充套件；沒有用 PostgreSQL 18 才有的 `uuidv7()`，因為資料庫版本可能因 SPK-06 或 RDS 而改變。外部來的識別碼（`google_sub`、LINE 與 WhatsApp 的識別碼、App 產生的 `device_id`）與雜湊是 `text`。時間點是 `timestamptz`。task 與行程的日期、時間、勿擾時段是不帶時區的 `date` 與 `time`，由用戶或 Trip 的時區解讀；程式讀到的 `date` 是 `YYYY-MM-DD` 字串、`time` 是 `HH:mm:ss` 字串。信心分數是 `double precision`，限制在 0 到 1。`proposed`、`before`、`after`、`place`、`transport`、`credentials` 是 `jsonb`；`credentials` 的實際形式由 CON-04 依 linejs 的 storage 介面決定，可以再改 |
+| 資料庫的預設值 | 只有 `id`、`created_at`、`updated_at` 有預設值；`updated_at` 由應用程式在修改時寫入，沒有 trigger。其餘欄位（包含狀態與布林值）都由寫入的程式明確給值。第 9.2 節的數值（保存期、勿擾時段、提醒上限、綁定碼效期）不出現在 schema 裡：`user_settings` 的欄位沒有預設值，建立帳號時由應用程式依設定寫入；`retention_days` 只檢查大於 0，不限制在 7、30、90 |
+| 欄位可否為空 | 第 4.2 節沒有標示。原則：設計或 API 明確允許空值的欄位才可為空，其餘一律 `NOT NULL`（例如 `messages.sender_name`，API 的來源訊息把它列為必填）。`task_changes` 的 `before`、`after` 比照 `trip_changes` 可為空 |
+| 列舉值的限制 | 值是封閉集合、程式會依它分支的欄位用 `text` 加 `CHECK`：各個 `status`、`kind`、`actor`、`source`、`origin`、`direction`、`level`、`role`、`platform`、`channel`、對話的 `type`、`ingestion_override`、`feedback`。之後會擴充的分類不加限制，由應用程式依 API 契約驗證：task 類型、詐騙手法（PIP-02 要求可以獨立更新）、行程項目類型、訊息內容類型、通知類型與 `ref_type`、同意文件類型。文件沒有列舉值的欄位也不加限制，由負責的工作項目訂定：`pipeline_windows.status`、`agent_runs.status`、`agent_runs.delivery`、`whatsapp_outbound_log.kind`。`line_connections.status` 接受 API 的四個值（含 `not_linked`），所以中斷連結時刪除資料列或保留資料列並清空憑證都可以，由 CON-05 決定 |
+| 第 4.2 節沒有列、API 需要的欄位 | `consent_documents.title`、`line_link_sessions.failure_reason`、`tasks` 與 `trips` 的 `created_at` 與 `updated_at`、`task_proposals.created_at`。`user_settings` 的「各類通知開關」是四個布林欄位，對應 API 的四個開關：`notify_task_reminders`、`notify_scam_alerts`、`notify_connection_status`、`notify_agent_results`。`agent_messages.content` 沿用第 4.2 節的名稱，API 上叫 `text` |
+| 每張業務資料表的 `user_id` | 第 4.2 節開頭規定每張業務資料表都有 `user_id`，但下列資料表的欄位清單沒有列，這次補上：`pipeline_windows`、`task_changes`、`reminders`、`itinerary_items`、`trip_changes`、`agent_messages`、`agent_runs`。子資料列的 `user_id` 與上層資料列是否一致沒有用資料庫約束保證，由 FND-05 的查詢層負責。`invites` 與 `consent_documents` 不是用戶資料，沒有 `user_id` |
+| 主鍵與唯一約束 | 第 4.2 節列了 `id` 的資料表以它為主鍵，沒有列的用自然鍵：`invites(email)`（只接受小寫，查詢前先轉小寫）、`consent_documents(type, version)`、`refresh_tokens(token_hash)`、`devices(user_id, device_id)`、`user_settings(user_id)`、`line_connections(user_id)`、`oa_bindings(user_id, platform)`、`oa_binding_codes(code_hash)`。`consent_records` 是例外：每次同意留一筆（ADR-0022），同一版文件可以有多筆，所以補上 `id` 當主鍵，沒有唯一約束。設計點名的唯一約束：`users.google_sub`、`messages(conversation_id, external_id)`。另外加上兩個設計隱含的：`conversations(user_id, platform, external_id)`，以及 `oa_bindings(platform, external_user_id)`（webhook 以它找到用戶，同一個官方帳號上的用戶只能綁定一個帳號） |
+| 每個對話同時只有一個未處理視窗 | 用 `pipeline_windows` 上的 partial unique index 保證：`processed_at` 為空的資料列每個對話只能有一筆。視窗結束時不論結果都要寫入 `processed_at`（PIP-01） |
+| 外鍵的刪除行為 | **刪除用戶**時，該用戶在各資料表的資料列一併刪除，有兩個例外。`consent_records` 沒有設定刪除行為，還有同意紀錄時刪不掉用戶：ADR-0022 把同意紀錄的保留範圍留待另行處理，所以帳號刪除（ACC-06）必須明確處理它，不會被連帶刪掉。`whatsapp_outbound_log.user_id` 置空而不刪除資料列，預算的計數不會因為刪除帳號而變少；這個欄位也因此可為空，回覆未綁定用戶的固定訊息本來就沒有用戶（ADR-0024）。**隨上層刪除**：對話的訊息與視窗；task 的提醒、變更紀錄與指向它的待確認項目；Trip 的行程項目與變更紀錄；agent 對話的訊息與執行紀錄。**置空**：三個 `source_message_id`（ADR-0004）、兩個 `source_conversation_id`、`tasks.trip_id`。`scam_alerts.conversation_id` 不可為空（API 的警告一定帶對話），也沒有設定刪除行為：還有警告的對話無法單獨刪除，之後有工作項目要刪除對話時再決定警告的去留 |
+| 沒有設外鍵的參照 | `trip_changes.item_id`：行程項目刪除後紀錄要留著，而且要看得出是哪個項目（TRP-01）。`notifications.ref_id`：指向多種資源。`refresh_tokens.device_id`：登入先於推播 token 註冊，那時 `devices` 還沒有資料列 |
+| 索引 | 每個外鍵的欄位都有索引，上層資料列刪除或置空時不需要掃描整張表（保存期清除會大量刪除訊息）。依查詢型態設計的索引由用到的工作項目加入。`messages.text` 的中文關鍵字索引這次沒有建立，等 SPK-06 選定後由 AGT-04 加入；也沒有建立資料庫角色與授權（DEC-09）、讀取服務的連線租約資料表（ADR-0025）、pg-boss 的資料表（FND-06） |
+| 這次沒有放進資料庫的規則 | 每個官方帳號通道各一個持續的對話、同一個 agent 對話同時只有一個進行中的回覆、行程項目當日順序不重複、同一個 FCM token 只屬於一個用戶、`create` 的待確認項目沒有目標 task（只檢查 `update` 與 `cancel` 一定要有）。是否加上約束由負責的工作項目決定 |
+| 資料庫測試 | 屬於 `pnpm test`。測試連到一台真實的 PostgreSQL，為每個測試檔建立隨機命名的空資料庫、套用 migration、檢查後刪除，不讀寫開發用的資料庫。檢查的內容：資料表與第 4.2 節一致、逐欄的型別、主鍵與唯一約束、全部外鍵與刪除行為、來源訊息刪除後參照置空、重複套用沒有變化、衍生資料的資料表沒有可以放原文的欄位。預設連本機 compose 的 PostgreSQL，也可以用 `TEST_DATABASE_URL` 指定；連不上時在本機略過並印出提示，在 CI 或有設定 `TEST_DATABASE_URL` 時則失敗，所以 CI 不會因為略過而通過。沒有用 Testcontainers：本機已經有 compose 的資料庫，CI 用 service container，不需要多一個相依。QA-01 的整合測試基礎可以沿用 `packages/shared/src/db/testing/` |
 
 ### 未決事項
 

@@ -3,7 +3,12 @@ import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 import { ConfigError, type ConfigIssue } from './errors.js';
-import { loadConnectorConfig, loadCoreConfig, type Environment } from './load.js';
+import {
+  loadConnectorConfig,
+  loadCoreConfig,
+  loadDatabaseConfig,
+  type Environment,
+} from './load.js';
 import { CORE_ONLY_CREDENTIAL_VARIABLES } from './settings.js';
 
 const database = {
@@ -46,6 +51,39 @@ function failure(load: () => unknown): ConfigError {
 function coreIssues(env: Environment): readonly ConfigIssue[] {
   return failure(() => loadCoreConfig(env)).issues;
 }
+
+describe('loadDatabaseConfig', () => {
+  it('reads the database connection with the default port', () => {
+    const config = loadDatabaseConfig(database);
+    expect(config).toMatchObject({ host: 'postgres', port: 5432, user: 'arlo', name: 'arlo' });
+    expect(config.password.reveal()).toBe('test-database-password');
+  });
+
+  it('takes the port from the environment', () => {
+    expect(loadDatabaseConfig({ ...database, DATABASE_PORT: '6543' }).port).toBe(6543);
+  });
+
+  it('needs no other setting and ignores the ones it is given', () => {
+    const config = loadDatabaseConfig({
+      ...database,
+      ...credentials,
+      TASK_CONFIDENCE_THRESHOLD: 'not-a-number',
+    });
+    expect(Object.keys(config)).toEqual(['host', 'port', 'user', 'password', 'name']);
+  });
+
+  it('names every missing variable as a problem of the migration command', () => {
+    const error = failure(() => loadDatabaseConfig({ DATABASE_PORT: 'abc' }));
+    expect(error.service).toBe('migrate');
+    expect(error.issues.map((issue) => issue.variable).toSorted()).toEqual([
+      'DATABASE_HOST',
+      'DATABASE_NAME',
+      'DATABASE_PASSWORD',
+      'DATABASE_PORT',
+      'DATABASE_USER',
+    ]);
+  });
+});
 
 describe('loadConnectorConfig', () => {
   it('applies the defaults of design §9.2', () => {

@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
-import type { ServiceName } from '../index.js';
-import { ConfigError, type ConfigIssue } from './errors.js';
+import { ConfigError, type ConfigIssue, type ConfiguredProcess } from './errors.js';
 import type { Secret } from './secret.js';
 import {
   connectorSettings,
   CORE_ONLY_CREDENTIAL_VARIABLES,
   coreSettings,
+  databaseSettings,
   VARIABLE_GROUPS,
 } from './settings.js';
 
@@ -89,7 +89,7 @@ type Check<Values> = (values: Values) => ConfigIssue[];
  * `env` are ignored. Throws a ConfigError listing every problem found.
  */
 function readEnvironment<Shape extends z.ZodRawShape>(
-  service: ServiceName,
+  service: ConfiguredProcess,
   settings: Shape,
   env: Environment,
   forbidden: readonly string[],
@@ -229,6 +229,15 @@ export function loadConnectorConfig(env: Environment): ConnectorConfig {
     database: databaseConfig(values),
     pipelineWindow: pipelineWindowConfig(values),
   };
+}
+
+/**
+ * Loads the database connection alone, for the migration command. It runs before either
+ * service starts and needs none of their other settings, so a credential that a service
+ * will later require does not have to be handed to it.
+ */
+export function loadDatabaseConfig(env: Environment): DatabaseConfig {
+  return databaseConfig(readEnvironment('migrate', databaseSettings, env, [], []));
 }
 
 /** Loads the core service's configuration from its environment, normally `process.env`. */

@@ -33,7 +33,7 @@ pnpm install
 
 ## 本機啟動
 
-需要 Docker。一個指令啟動 PostgreSQL 與兩個服務：
+需要 Docker。一個指令啟動 PostgreSQL、套用資料庫的 migration、再啟動兩個服務：
 
 ```bash
 docker compose up --build
@@ -43,6 +43,24 @@ docker compose up --build
 - `docker compose down` 停止並移除容器；加上 `-v` 會一併刪除資料庫的資料。
 - PostgreSQL 只開在本機的 `127.0.0.1:5432`。帳號、密碼、資料庫名稱是 `docker-compose.yml` 裡的開發用預設值，要改的話把 `.env.example` 複製成 `.env` 再修改。帳號、密碼、資料庫名稱只在資料庫第一次建立時生效，改了之後要先執行 `docker compose down -v`。這些值只能用在本機開發。
 - 兩個服務目前是佔位的程序，只會驗證設定、啟動並等待停止訊號。
+
+### 資料庫 migration
+
+資料庫的 schema 以 migration 管理（Kysely，放在 `packages/shared/src/db/migrations/`）。服務啟動時不會自己套用 migration。
+
+- `docker compose up` 會先執行一次性的 `migrate` 步驟，成功後才啟動兩個服務，所以平常不需要另外操作。
+- 新增 migration 之後重新套用：
+
+  ```bash
+  docker compose build
+  docker compose run --rm migrate
+  ```
+
+- 不透過 Docker：先 `pnpm build`，再把 `.env` 裡的 `DATABASE_*` 取消註解（或在 shell 設定），執行 `pnpm db:migrate`。
+- 重複套用不會有任何變化。已經進 `main` 的 migration 不再修改，要改就新增一個。
+- 要從空的資料庫重來：`docker compose down -v` 再 `docker compose up --build`。
+
+新增 migration 的步驟與 schema 的慣例見 [CLAUDE.md](CLAUDE.md) 的 Database 一節。
 
 ### 設定與 `.env`
 
@@ -62,10 +80,12 @@ docker compose up --build
 pnpm typecheck        # 型別檢查
 pnpm lint             # ESLint
 pnpm format:check     # 檢查格式，pnpm format 會直接改寫
-pnpm test             # 執行全部測試
+pnpm test             # 執行全部測試（資料庫測試需要 PostgreSQL，見下方）
 pnpm test:coverage    # 含覆蓋率，低於 80% 會失敗
 pnpm build            # 建置到各套件的 dist/
 ```
+
+資料庫測試會連到本機 compose 的 PostgreSQL（先執行 `docker compose up -d postgres`），在上面建立隨機命名的空資料庫、套用 migration、檢查後刪除，不會動到開發用的資料。連不上 PostgreSQL 時這些測試會被略過並印出提示，其餘測試照常執行；要連到別台 PostgreSQL 就設定 `TEST_DATABASE_URL`。
 
 執行單一測試：
 
@@ -79,4 +99,4 @@ pnpm vitest run services/core/src/index.test.ts
 npx --yes @redocly/cli@latest lint docs/api/openapi.yaml
 ```
 
-CI（GitHub Actions，`.github/workflows/ci.yml`）在每個 PR 與每次 push 到 `main` 時執行上面的格式檢查、lint、型別檢查、含覆蓋率的測試、建置與 API 規格檢查，並試建兩個服務的映像。push 之前先在本機跑過。
+CI（GitHub Actions，`.github/workflows/ci.yml`）在每個 PR 與每次 push 到 `main` 時執行上面的格式檢查、lint、型別檢查、含覆蓋率的測試（含資料庫測試）、建置、套用 migration 與 API 規格檢查，並試建兩個服務的映像。push 之前先在本機跑過。

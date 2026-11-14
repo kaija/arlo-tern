@@ -1,5 +1,8 @@
 import type { ServiceName } from '../index.js';
 
+/** A process that loads configuration: a service, or the one-shot migration command. */
+export type ConfiguredProcess = ServiceName | 'migrate';
+
 /** One rejected environment variable. `message` reads as a continuation of the variable name. */
 export interface ConfigIssue {
   readonly variable: string;
@@ -7,16 +10,16 @@ export interface ConfigIssue {
 }
 
 /**
- * Thrown when a service's environment is not a valid configuration.
+ * Thrown when a process's environment is not a valid configuration.
  *
  * It names every offending variable and the rule it broke. It never carries a variable's
  * value, and it has no `cause`, so printing or serialising it cannot leak a secret.
  */
 export class ConfigError extends Error {
-  readonly service: ServiceName;
+  readonly service: ConfiguredProcess;
   readonly issues: readonly ConfigIssue[];
 
-  constructor(service: ServiceName, issues: readonly ConfigIssue[]) {
+  constructor(service: ConfiguredProcess, issues: readonly ConfigIssue[]) {
     const lines = issues.map((issue) => `  ${issue.variable} ${issue.message}`);
     super([`Invalid configuration for ${service}:`, ...lines].join('\n'));
     this.name = 'ConfigError';

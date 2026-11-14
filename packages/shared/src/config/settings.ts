@@ -109,6 +109,9 @@ export const coreSettings = {
   ...coreCredentialSettings,
 };
 
+/** Every environment variable the migration command reads. */
+export const MIGRATE_VARIABLES: readonly string[] = Object.keys(databaseSettings);
+
 /** Every environment variable the connector reads. */
 export const CONNECTOR_VARIABLES: readonly string[] = Object.keys(connectorSettings);
 

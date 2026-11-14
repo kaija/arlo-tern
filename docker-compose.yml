@@ -1,4 +1,4 @@
-# Local development stack: PostgreSQL and the two backend services.
+# Local development stack: PostgreSQL, a one-shot migration step and the two backend services.
 # The production stack (reverse proxy, TLS, secrets) is a separate file, see work item OPS-02.
 # The variables a service reads are defined in packages/shared/src/config/settings.ts; a test
 # fails when a service's environment block here lists a different set.
@@ -22,6 +22,28 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Applies the pending database migrations, then exits. The two services start only after it
+  # has succeeded, so they always find the schema of the code they were built from. It runs
+  # the core image because every image holds the migrations; it gets the database connection
+  # and nothing else. Run it again on its own with `docker compose run --rm migrate`.
+  migrate:
+    build:
+      context: .
+      args:
+        SERVICE: core
+    init: true
+    command: ['node', '/app/packages/shared/dist/db/migrate-main.js']
+    restart: 'no'
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: '5432'
+      DATABASE_USER: ${POSTGRES_USER:-arlo}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-arlo-dev-only}
+      DATABASE_NAME: ${POSTGRES_DB:-arlo}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # Holds the users' LINE connections. Run exactly one instance (ADR-0019, ADR-0025)
   # and publish no ports: only core talks to it, over the internal network.
@@ -48,6 +70,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   core:
     build:
@@ -91,6 +115,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:

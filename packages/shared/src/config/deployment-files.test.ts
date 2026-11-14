@@ -6,6 +6,7 @@ import {
   CONNECTOR_VARIABLES,
   CORE_ONLY_CREDENTIAL_VARIABLES,
   CORE_VARIABLES,
+  MIGRATE_VARIABLES,
   undecidedSettings,
 } from './settings.js';
 
@@ -51,6 +52,10 @@ describe('docker-compose.yml', () => {
 
   it('gives the core service exactly the variables it reads', () => {
     expect(composeEnvironment('core').toSorted()).toEqual(CORE_VARIABLES.toSorted());
+  });
+
+  it('gives the migration step exactly the variables it reads', () => {
+    expect(composeEnvironment('migrate').toSorted()).toEqual(MIGRATE_VARIABLES.toSorted());
   });
 
   it('gives the connector no core credential', () => {

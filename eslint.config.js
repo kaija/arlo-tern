@@ -23,8 +23,9 @@ export default defineConfig(
     languageOptions: { globals: globals.node },
   },
   {
-    // Service configuration is backend only: it names the backend's secrets and is not
-    // written for the React Native runtime. The mobile app must not import it.
+    // Service configuration and database access are backend only: the first names the
+    // backend's secrets, the second opens PostgreSQL connections, and neither is written for
+    // the React Native runtime. The mobile app must not import them.
     files: ['apps/**'],
     rules: {
       'no-restricted-imports': [
@@ -35,6 +36,10 @@ export default defineConfig(
               name: '@arlo-tern/shared/config',
               message: 'Service configuration is backend only; see "Configuration" in CLAUDE.md.',
             },
+            {
+              name: '@arlo-tern/shared/db',
+              message: 'Database access is backend only; see "Database" in CLAUDE.md.',
+            },
           ],
         },
       ],
@@ -42,7 +47,7 @@ export default defineConfig(
   },
   {
     // The app imports the root entry of the shared package, so that entry must not pull
-    // the configuration in either.
+    // the configuration or the database code in either.
     files: ['packages/shared/src/index.ts'],
     rules: {
       'no-restricted-imports': [
@@ -52,6 +57,10 @@ export default defineConfig(
             {
               group: ['./config', './config/*'],
               message: 'Service configuration is backend only; see "Configuration" in CLAUDE.md.',
+            },
+            {
+              group: ['./db', './db/*'],
+              message: 'Database access is backend only; see "Database" in CLAUDE.md.',
             },
           ],
         },
