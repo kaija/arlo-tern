@@ -12,7 +12,7 @@ Read these before changing anything, in this order:
 
 | Document | What it holds |
 |---|---|
-| `docs/adr/README.md` | Index of the 24 ADRs, decisions that differ from the recommended option, validations required before coding, open items |
+| `docs/adr/README.md` | Index of the 25 ADRs, decisions that differ from the recommended option, validations required before coding, open items |
 | `docs/design/system-design.md` | Components, data model, flows, security. §13 lists defaults the design introduced that no ADR decided; §14 lists open items |
 | `docs/api/openapi.yaml` | OpenAPI 3.1 spec for the core service's app-facing API and the LINE / WhatsApp webhooks |
 | `docs/plan/work-items.md` | The work breakdown with dependencies. Pick work from here and update its status column |
@@ -59,6 +59,7 @@ These are settled in ADRs. Do not "correct" them back to a general preference:
 Every change must keep these true. Each comes from an ADR and is easy to break by accident:
 
 - **The connector interface has no method that sends, marks as read, adds friends or changes settings.** Personal accounts are read-only (ADR-0001).
+- **A user's LINE connection is held by at most one connector process at a time.** The beta runs exactly one connector instance. Do not run the connector on ECS, or as more than one replica, before the connection lease of ADR-0025 exists; that lease is pre-launch work, not MVP (ADR-0019, ADR-0025).
 - **Official accounts only reply to user-initiated messages.** Never use LINE push messages or WhatsApp template messages. System-initiated notifications go through app push only (ADR-0011, ADR-0024).
 - **Derived data carries no raw message text.** Tasks, proposals, scam alerts, memory entries and notifications store only AI-summarised fields plus a nullable reference to the source message (ADR-0004). Raw text leaves the API only through the `/source` endpoints and agent replies.
 - **User scope comes from the authenticated identity.** No user ID in API paths, request bodies or agent tool parameters. Accessing another user's resource returns 404 (ADR-0013, ADR-0020).
